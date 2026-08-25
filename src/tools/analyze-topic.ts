@@ -159,7 +159,7 @@ Args:
   - include_channel_stats (boolean): Also fetch subscriber counts for the channels behind the top videos (default true)
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')
 
-Returns: Ranked list of top_n videos with full stats, plus an aggregate analysis block (total/average views, average engagement rate, duration stats, publish date range, dominant channels, common keywords in titles).
+Returns: Ranked list of top_n videos with full stats, plus an aggregate analysis block (total/average views, average engagement rate, duration stats, publish date range, dominant channels, common keywords in titles). This only analyzes metadata (views, likes, titles, etc.) — to evaluate what a video actually says, pass its video_id/url into youtube_get_transcripts afterward.
 
 Examples:
   - Use when: "What are the 10 most watched videos about the 2026 World Cup?" -> topic="2026 World Cup"

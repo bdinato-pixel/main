@@ -3,7 +3,9 @@
 Servidor MCP (Model Context Protocol) que permite a um agente de IA (Claude, etc.) pesquisar
 vídeos no YouTube sobre um assunto, verificar as visualizações reais e retornar os **10 vídeos
 mais vistos** sobre esse tema, junto com uma análise agregada (engajamento, canais dominantes,
-palavras-chave dos títulos, duração, período de publicação etc.).
+palavras-chave dos títulos, duração, período de publicação etc.). Também é capaz de buscar a
+**transcrição/legenda** (o que foi falado) de vídeos específicos, para que o agente possa avaliar
+o conteúdo em si, não só os metadados.
 
 ## Sobre a conta Premium do YouTube
 
@@ -106,6 +108,13 @@ e defina `YOUTUBE_API_KEY` no ambiente, ou adicione ao arquivo de configuração
   por relevância, visualizações, data ou avaliação.
 - **`youtube_get_video_details`** — detalhes completos de vídeos específicos, por ID ou URL.
 - **`youtube_get_channel_details`** — inscritos, total de vídeos e visualizações de um canal.
+- **`youtube_get_transcripts`** — busca a transcrição (legenda manual ou automática) de até 5
+  vídeos por chamada, para avaliar o conteúdo falado. Normalmente encadeada depois de
+  `youtube_analyze_topic`: pegue os `video_id`/`url` dos top 10 e passe aqui para o agente ler
+  (e avaliar) o que cada vídeo realmente diz. Suporta preferência de idioma, timestamps por
+  trecho e limite de caracteres por vídeo. **Não usa a YouTube Data API nem gasta cota** — lê as
+  mesmas legendas públicas exibidas pelo player do YouTube, então só funciona para vídeos que
+  têm legenda disponível (a maioria dos vídeos falados tem, mesmo que só a automática).
 
 Todas as ferramentas são somente leitura (não publicam, curtem ou modificam nada) e suportam
 `response_format` (`markdown` ou `json`).
@@ -128,3 +137,12 @@ npm start        # roda a versão compilada
   campos; a taxa de engajamento é `null` quando não há dados suficientes.
 - A API não expõe watch time, retenção ou dados de audiência — apenas métricas públicas
   (visualizações, curtidas, comentários, metadados).
+- `youtube_get_transcripts` não usa a Data API oficial — ele lê a página pública do vídeo (o
+  mesmo mecanismo que o player do YouTube usa para exibir legendas), então:
+  - Só funciona para vídeos com legenda disponível (manual ou automática); vídeos sem fala,
+    com legendas desabilitadas, privados ou indisponíveis retornam
+    `transcript_available: false` com um motivo, em vez de erro.
+  - Por não ser uma API oficial, esse mecanismo pode quebrar se o YouTube mudar a estrutura da
+    página, ou ser bloqueado/limitado em redes corporativas ou ambientes automatizados
+    restritivos que impedem acesso direto a `www.youtube.com` (diferente da Data API, que usa
+    `googleapis.com` e costuma ser liberada com mais facilidade nesses ambientes).

@@ -88,6 +88,27 @@ export interface ChannelSummary {
   country: string | null;
 }
 
+export interface TranscriptSegment {
+  start_seconds: number;
+  duration_seconds: number;
+  text: string;
+}
+
+export interface VideoTranscriptResult {
+  video_id: string;
+  url: string;
+  transcript_available: boolean;
+  language_code: string | null;
+  is_auto_generated: boolean | null;
+  available_languages: string[];
+  character_count: number;
+  word_count: number;
+  truncated: boolean;
+  transcript: string | null;
+  segments: TranscriptSegment[] | null;
+  error: string | null;
+}
+
 export interface TopicAnalysis {
   query: string;
   candidates_examined: number;

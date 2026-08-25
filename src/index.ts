@@ -10,6 +10,7 @@ import { registerSearchVideosTool } from "./tools/search-videos.js";
 import { registerVideoDetailsTool } from "./tools/video-details.js";
 import { registerChannelDetailsTool } from "./tools/channel-details.js";
 import { registerAnalyzeTopicTool } from "./tools/analyze-topic.js";
+import { registerGetTranscriptsTool } from "./tools/get-transcripts.js";
 
 const server = new McpServer({
   name: "youtube-mcp-server",
@@ -20,6 +21,7 @@ registerSearchVideosTool(server);
 registerVideoDetailsTool(server);
 registerChannelDetailsTool(server);
 registerAnalyzeTopicTool(server);
+registerGetTranscriptsTool(server);
 
 async function main(): Promise<void> {
   if (!process.env.YOUTUBE_API_KEY) {
