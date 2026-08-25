@@ -58,6 +58,42 @@ e defina `YOUTUBE_API_KEY` no ambiente, ou adicione ao arquivo de configuração
 }
 ```
 
+### Uso com Claude Desktop
+
+1. **Baixe o projeto na sua máquina** (clone o repositório ou baixe o branch/PR) e rode a
+   instalação acima (`npm install && npm run build`) — o Claude Desktop roda o servidor localmente,
+   então ele precisa existir no seu computador, não só neste ambiente remoto.
+2. Localize (ou crie) o arquivo de configuração do Claude Desktop:
+   - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+   - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+   - **Linux**: `~/.config/Claude/claude_desktop_config.json`
+3. Adicione (ou mescle) a entrada abaixo, usando o **caminho absoluto** até o `dist/index.js` que
+   você acabou de compilar e a sua chave de API real:
+
+   ```json
+   {
+     "mcpServers": {
+       "youtube": {
+         "command": "node",
+         "args": ["/caminho/absoluto/para/youtube-mcp-server/dist/index.js"],
+         "env": {
+           "YOUTUBE_API_KEY": "sua_chave_aqui"
+         }
+       }
+     }
+   }
+   ```
+
+   - No Windows, use barras duplas ou normais no caminho, ex.: `"C:\\Users\\seu_usuario\\youtube-mcp-server\\dist\\index.js"`.
+   - Se o arquivo já tiver outros servidores em `mcpServers`, apenas adicione a chave `"youtube"` ao
+     objeto existente — não substitua o arquivo inteiro.
+4. **Reinicie o Claude Desktop** por completo (feche e abra de novo, não só a janela).
+5. Para confirmar que carregou: abra uma conversa nova e veja se as ferramentas `youtube_analyze_topic`,
+   `youtube_search_videos`, `youtube_get_video_details` e `youtube_get_channel_details` aparecem no
+   ícone de ferramentas/MCP (ícone de martelo/plugue, dependendo da versão). Se não aparecer, confira
+   os logs do Claude Desktop (menu **Developer** ou pasta de logs do app) para erros de inicialização
+   — o motivo mais comum é caminho incorreto para o `dist/index.js` ou `YOUTUBE_API_KEY` ausente.
+
 ## Ferramentas disponíveis
 
 - **`youtube_analyze_topic`** — ferramenta principal. Pesquisa um assunto, confere as
