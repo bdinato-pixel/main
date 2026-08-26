@@ -6,11 +6,14 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { configureProxyFromEnv } from "./services/proxy.js";
 import { registerSearchVideosTool } from "./tools/search-videos.js";
 import { registerVideoDetailsTool } from "./tools/video-details.js";
 import { registerChannelDetailsTool } from "./tools/channel-details.js";
 import { registerAnalyzeTopicTool } from "./tools/analyze-topic.js";
 import { registerGetTranscriptsTool } from "./tools/get-transcripts.js";
+
+configureProxyFromEnv();
 
 const server = new McpServer({
   name: "youtube-mcp-server",
