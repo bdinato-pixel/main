@@ -1,0 +1,40 @@
+{
+  "manifest_version": "0.2",
+  "name": "youtube-mcp-server",
+  "display_name": "YouTube Search & Analysis",
+  "version": "1.0.0",
+  "description": "Pesquisa vídeos no YouTube, analisa os mais vistos sobre um tema e busca transcrições.",
+  "long_description": "Servidor MCP que permite ao Claude pesquisar vídeos no YouTube, verificar visualizações reais e retornar os vídeos mais vistos sobre um tema, com análise agregada (engajamento, canais dominantes, palavras-chave, duração). Também busca a transcrição/legenda de vídeos específicos. Requer uma chave gratuita da YouTube Data API v3 (Google Cloud).",
+  "author": {
+    "name": "Bruno Dinato"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/index.js"],
+      "env": {
+        "YOUTUBE_API_KEY": "${user_config.youtube_api_key}"
+      }
+    }
+  },
+  "user_config": {
+    "youtube_api_key": {
+      "type": "string",
+      "title": "YouTube API Key",
+      "description": "Chave da YouTube Data API v3 (gratuita, criada no Google Cloud Console em APIs e Serviços > Credenciais).",
+      "sensitive": true,
+      "required": true
+    }
+  },
+  "tools": [
+    { "name": "youtube_analyze_topic", "description": "Top N vídeos mais vistos sobre um tema, com análise agregada" },
+    { "name": "youtube_search_videos", "description": "Busca vídeos com metadados e estatísticas" },
+    { "name": "youtube_get_video_details", "description": "Detalhes completos de vídeos por ID ou URL" },
+    { "name": "youtube_get_channel_details", "description": "Estatísticas de canais" },
+    { "name": "youtube_get_transcripts", "description": "Transcrição/legenda de até 5 vídeos por chamada" }
+  ],
+  "keywords": ["youtube", "video", "search", "transcript", "analysis"],
+  "license": "MIT"
+}
