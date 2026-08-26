@@ -98,7 +98,7 @@ export interface VideoTranscriptResult {
   video_id: string;
   url: string;
   transcript_available: boolean;
-  language_code: string | null;
+  language: string | null;
   is_auto_generated: boolean | null;
   available_languages: string[];
   character_count: number;

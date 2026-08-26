@@ -112,9 +112,10 @@ e defina `YOUTUBE_API_KEY` no ambiente, ou adicione ao arquivo de configuração
   vídeos por chamada, para avaliar o conteúdo falado. Normalmente encadeada depois de
   `youtube_analyze_topic`: pegue os `video_id`/`url` dos top 10 e passe aqui para o agente ler
   (e avaliar) o que cada vídeo realmente diz. Suporta preferência de idioma, timestamps por
-  trecho e limite de caracteres por vídeo. **Não usa a YouTube Data API nem gasta cota** — lê as
-  mesmas legendas públicas exibidas pelo player do YouTube, então só funciona para vídeos que
-  têm legenda disponível (a maioria dos vídeos falados tem, mesmo que só a automática).
+  trecho e limite de caracteres por vídeo. **Não usa a YouTube Data API nem gasta cota** — usa o
+  mecanismo interno do YouTube (o mesmo do botão "Mostrar transcrição" do site), via a biblioteca
+  [`youtubei.js`](https://github.com/LuanRT/YouTube.js), então só funciona para vídeos que têm
+  legenda disponível (a maioria dos vídeos falados tem, mesmo que só a automática).
 
 Todas as ferramentas são somente leitura (não publicam, curtem ou modificam nada) e suportam
 `response_format` (`markdown` ou `json`).
@@ -137,12 +138,23 @@ npm start        # roda a versão compilada
   campos; a taxa de engajamento é `null` quando não há dados suficientes.
 - A API não expõe watch time, retenção ou dados de audiência — apenas métricas públicas
   (visualizações, curtidas, comentários, metadados).
-- `youtube_get_transcripts` não usa a Data API oficial — ele lê a página pública do vídeo (o
-  mesmo mecanismo que o player do YouTube usa para exibir legendas), então:
-  - Só funciona para vídeos com legenda disponível (manual ou automática); vídeos sem fala,
-    com legendas desabilitadas, privados ou indisponíveis retornam
+- `youtube_get_transcripts` não usa a Data API oficial — ele usa o mecanismo interno do YouTube
+  (`youtubei/v1/get_transcript`, via a biblioteca `youtubei.js`), o mesmo que o botão "Mostrar
+  transcrição" do site usa. Isso é necessário porque, desde 2024/2025, o YouTube passou a exigir
+  um "Proof of Origin Token" (PoToken) para liberar o endpoint antigo de legendas
+  (`api/timedtext`) a clientes que não são o player oficial do navegador — a `youtubei.js`
+  acompanha essas mudanças ativamente, o que uma implementação própria não conseguiria sem
+  manutenção constante. Consequências práticas:
+  - Só funciona para vídeos com transcrição disponível (manual ou automática); vídeos sem fala,
+    livestreams, com transcrição desabilitada, privados ou indisponíveis retornam
     `transcript_available: false` com um motivo, em vez de erro.
-  - Por não ser uma API oficial, esse mecanismo pode quebrar se o YouTube mudar a estrutura da
-    página, ou ser bloqueado/limitado em redes corporativas ou ambientes automatizados
-    restritivos que impedem acesso direto a `www.youtube.com` (diferente da Data API, que usa
-    `googleapis.com` e costuma ser liberada com mais facilidade nesses ambientes).
+  - Por não ser uma API oficial/documentada, pode quebrar se o YouTube mudar esse mecanismo
+    interno — nesse caso, atualizar a dependência `youtubei.js` (`npm update youtubei.js`)
+    costuma resolver, já que é justamente isso que a biblioteca mantém.
+  - Pode ser bloqueado em redes corporativas ou ambientes automatizados restritivos que impedem
+    acesso direto a `www.youtube.com` (diferente da Data API, que usa `googleapis.com` e costuma
+    ser liberada com mais facilidade nesses ambientes).
+  - Para um pequeno número de vídeos, o YouTube pode ainda exigir um PoToken válido mesmo por
+    esse caminho; isso apareceria como erro ao carregar as informações do vídeo. Se isso ocorrer
+    com frequência, é possível fornecer um PoToken manualmente (veja a documentação da
+    `youtubei.js` sobre `po_token`), mas isso não está configurado por padrão neste servidor.
