@@ -110,7 +110,13 @@ export async function fetchTranscriptSegments(track: CaptionTrack): Promise<Tran
   try {
     const response = await axios.get<string>(baseUrl, {
       timeout: 15000,
-      headers: { "User-Agent": BROWSER_USER_AGENT },
+      headers: {
+        "User-Agent": BROWSER_USER_AGENT,
+        // Without a Referer, YouTube's timedtext endpoint often answers 200 with an empty body
+        // instead of the caption XML — this is the standard workaround for that.
+        Referer: "https://www.youtube.com/",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
     });
     xml = response.data;
   } catch (error) {
@@ -136,6 +142,15 @@ export async function fetchTranscriptSegments(track: CaptionTrack): Promise<Tran
       text,
     });
   }
+
+  if (segments.length === 0) {
+    const snippet = xml.replace(/\s+/g, " ").trim().slice(0, 200);
+    throw new TranscriptError(
+      `The caption track responded but no <text> segments could be parsed from it (this usually means YouTube served an ` +
+        `empty or differently-formatted response). Raw response start: ${snippet ? `"${snippet}"` : "(empty body)"}`,
+    );
+  }
+
   return segments;
 }
 
