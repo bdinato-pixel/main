@@ -11,11 +11,11 @@ import type {
 } from '../store/types.js';
 import type { ExchangeAdapter, FillEvent, SymbolInfo } from '../exchange/types.js';
 import { computeBaseQty, type AmountCtx } from './amount.js';
-import { decide } from './decide.js';
-import { planTpOrders, slPrice as computeSlPrice, updateTrailing } from './modules.js';
+import { decide, relevantSide } from './decide.js';
+import { planGrid, planTpOrders, slPrice as computeSlPrice, updateTrailing } from './modules.js';
 import { quantizeOrder, quantizeQty } from './quantizer.js';
 import { effectiveHook, parseSignal, SignalError, signalTpOrders } from './signal.js';
-import { defaultSlModule, defaultSlxModule, defaultTpModule } from './defaults.js';
+import { defaultGridConfig, defaultSlModule, defaultSlxModule, defaultTpModule } from './defaults.js';
 
 export type AdapterFactory = (accountId: string, market: MarketType) => Promise<ExchangeAdapter>;
 
@@ -25,6 +25,8 @@ interface PendingIntent {
   leverage: number;
   marginMode: 'cross' | 'isolated';
   config: ManagedPosition['config'];
+  /** Unfilled grid entry orders to carry onto the position. */
+  entryOrderIds?: string[];
   createdAt: number;
 }
 
@@ -40,6 +42,8 @@ export interface ManualOrderInput {
   reduceOnly?: boolean;
   leverage?: number;
   marginMode?: 'cross' | 'isolated';
+  /** Spread qty over a grid of limit orders instead of one order. */
+  grid?: import('../store/types.js').GridConfig;
   tp?: ManagedPosition['config']['tp'];
   sl?: ManagedPosition['config']['sl'];
   slx?: ManagedPosition['config']['slx'];
@@ -68,11 +72,44 @@ export class TradingEngine extends EventEmitter {
     return symbol ? `${accountId}:${market}:${symbol}` : `${accountId}:${market}`;
   }
 
+  /** Whether this account trades futures in dual-side (hedge) mode. */
+  isHedge(accountId: string, market: MarketType): boolean {
+    if (market !== 'futures') return false;
+    return this.db.settings.accounts.find((a) => a.id === accountId)?.hedgeMode === true;
+  }
+
+  /** Intents are per pair in one-way mode, per pair+side in hedge mode. */
+  private intentKey(accountId: string, market: MarketType, symbol: string, dir: PositionDir): string {
+    const base = this.key(accountId, market, symbol);
+    return this.isHedge(accountId, market) ? `${base}:${dir}` : base;
+  }
+
+  /** Hedge orders carry the position side; one-way closing orders reduceOnly. */
+  private closeParams(pos: ManagedPosition): { reduceOnly?: boolean; positionSide?: 'LONG' | 'SHORT' } {
+    if (this.isHedge(pos.accountId, pos.market)) {
+      return { positionSide: pos.side === 'long' ? 'LONG' : 'SHORT' };
+    }
+    return { reduceOnly: pos.market === 'futures' };
+  }
+
+  /** Drop adapters for an account so config changes (hedge mode) re-apply. */
+  async resetAccount(accountId: string): Promise<void> {
+    for (const [key, adapter] of [...this.adapters]) {
+      if (key.startsWith(`${accountId}:`)) {
+        await adapter.close().catch(() => {});
+        this.adapters.delete(key);
+      }
+    }
+  }
+
   async adapter(accountId: string, market: MarketType): Promise<ExchangeAdapter> {
     const k = this.key(accountId, market);
     let a = this.adapters.get(k);
     if (!a) {
       a = await this.adapterFactory(accountId, market);
+      await a.setPositionMode(this.isHedge(accountId, market)).catch((e) =>
+        this.log('error', `position mode sync failed for ${accountId}: ${e}`),
+      );
       this.adapters.set(k, a);
       // Serialize fills per symbol so concurrent events can't interleave
       // position updates.
@@ -160,8 +197,11 @@ export class TradingEngine extends EventEmitter {
     const info = await adapter.symbolInfo(symbol);
     if (!info) return finish('ignore', `Unknown symbol ${symbol}`, false);
 
-    const position = this.db.openPositionFor(hook.accountId, hook.market, symbol);
-    const decision = decide(h, { ...signal, symbol }, position);
+    const hedge = this.isHedge(hook.accountId, hook.market);
+    const sigWithSymbol = { ...signal, symbol };
+    const side = hedge ? relevantSide(h, sigWithSymbol) : undefined;
+    const position = this.db.openPositionFor(hook.accountId, hook.market, symbol, side);
+    const decision = decide(h, sigWithSymbol, position, hedge);
 
     try {
       switch (decision.action) {
@@ -176,6 +216,14 @@ export class TradingEngine extends EventEmitter {
           return finish('dca', detail, !detail.startsWith('skipped'));
         }
         case 'close': {
+          // "flat" in hedge mode closes both sides of the pair.
+          if (hedge && signal.positionSide === 'flat') {
+            const targets = this.db
+              .openPositions(hook.accountId)
+              .filter((p) => p.market === hook.market && p.symbol === symbol);
+            for (const p of targets) await this.closePositionMarket(adapter, p, 1);
+            return finish('close', `flat: closed ${targets.length} side(s) of ${symbol}`, true);
+          }
           const detail = await this.executeClose(adapter, h, info, position!, signal, false);
           return finish('close', detail, !detail.startsWith('skipped'));
         }
@@ -286,27 +334,61 @@ export class TradingEngine extends EventEmitter {
       await adapter.setMarginMode(info.symbol, o.marginMode).catch(() => {});
     }
 
-    this.intents.set(key, {
+    const hedge = this.isHedge(h.accountId, h.market);
+    const positionSide = hedge ? (dir === 'long' ? 'LONG' : 'SHORT') : undefined;
+    const ikey = this.intentKey(h.accountId, h.market, info.symbol, dir);
+    const intent: PendingIntent = {
       dir,
       hookId: h.id,
       leverage: o.leverage,
       marginMode: o.marginMode,
       config: this.snapshotConfig(h),
       createdAt: Date.now(),
-    });
+    };
+    this.intents.set(ikey, intent);
     adapter.watchPrice(info.symbol);
 
-    const params = this.entryOrderParams(o.orderType, dir, price, o.priceOffsetPct);
     try {
+      if (o.entry === 'grid') {
+        const levels = planGrid(o.grid ?? defaultGridConfig(), dir, price, rawQty, info);
+        if (levels.length === 0) {
+          this.intents.delete(ikey);
+          return 'skipped: no grid orders above exchange minimums';
+        }
+        intent.entryOrderIds = [];
+        for (const lvl of levels) {
+          const res = await adapter.placeOrder({
+            symbol: info.symbol,
+            side: dir === 'long' ? 'BUY' : 'SELL',
+            type: 'LIMIT',
+            qty: lvl.qty,
+            price: lvl.price,
+            positionSide,
+          });
+          intent.entryOrderIds.push(res.orderId);
+        }
+        // A marketable grid level may have filled during placement and
+        // consumed the intent — carry the remaining order ids to the position.
+        if (!this.intents.has(ikey)) {
+          const pos = this.db.openPositionFor(h.accountId, h.market, info.symbol, hedge ? dir : undefined);
+          if (pos) {
+            pos.entryOrderIds = [...new Set([...(pos.entryOrderIds ?? []), ...intent.entryOrderIds])];
+            this.db.upsertPosition(pos);
+          }
+        }
+        return `open ${dir} grid ${levels.length} orders / ${rawQty.toPrecision(6)} ${info.symbol}`;
+      }
+      const params = this.entryOrderParams(o.orderType, dir, price, o.priceOffsetPct);
       const res = await adapter.placeOrder({
         symbol: info.symbol,
         side: dir === 'long' ? 'BUY' : 'SELL',
         qty: q.qty,
+        positionSide,
         ...params,
       });
       return `open ${dir} ${q.qty} ${info.symbol} @ ${params.type} (order ${res.orderId}, ${res.status})`;
     } catch (e) {
-      this.intents.delete(key);
+      this.intents.delete(ikey);
       throw e;
     }
   }
@@ -337,11 +419,38 @@ export class TradingEngine extends EventEmitter {
     position.config = this.snapshotConfig(h);
     this.db.upsertPosition(position);
 
+    const positionSide = this.isHedge(h.accountId, h.market)
+      ? position.side === 'long'
+        ? 'LONG'
+        : 'SHORT'
+      : undefined;
+
+    if (d.entry === 'grid') {
+      const levels = planGrid(d.grid ?? defaultGridConfig(), position.side, price, rawQty, info);
+      if (levels.length === 0) return 'skipped: no grid orders above exchange minimums';
+      const ids: string[] = [];
+      for (const lvl of levels) {
+        const res = await adapter.placeOrder({
+          symbol: info.symbol,
+          side: position.side === 'long' ? 'BUY' : 'SELL',
+          type: 'LIMIT',
+          qty: lvl.qty,
+          price: lvl.price,
+          positionSide,
+        });
+        ids.push(res.orderId);
+      }
+      position.entryOrderIds = [...new Set([...(position.entryOrderIds ?? []), ...ids])];
+      this.db.upsertPosition(position);
+      return `dca ${position.side} grid ${levels.length} orders / ${rawQty.toPrecision(6)} ${info.symbol}`;
+    }
+
     const params = this.entryOrderParams(d.orderType, position.side, price, d.priceOffsetPct);
     const res = await adapter.placeOrder({
       symbol: info.symbol,
       side: position.side === 'long' ? 'BUY' : 'SELL',
       qty: q.qty,
+      positionSide,
       ...params,
     });
     return `dca ${position.side} +${q.qty} ${info.symbol} (order ${res.orderId}, ${res.status})`;
@@ -380,15 +489,15 @@ export class TradingEngine extends EventEmitter {
     }
 
     let extraQty = 0;
+    const newDir: PositionDir = position.side === 'long' ? 'short' : 'long';
     if (reverse) {
       // Reverse: close the position and open the opposite side using the
-      // open module's amount in one order.
+      // open module's amount in one order (one-way futures only).
       const price = await this.refPrice(adapter, info.symbol, signal);
       const ctx = await this.amountCtx(adapter, info, h.open.leverage, price);
       extraQty = computeBaseQty(h.open.amount, ctx);
       closeQty = position.qty;
-      const newDir: PositionDir = position.side === 'long' ? 'short' : 'long';
-      this.intents.set(this.key(h.accountId, h.market, info.symbol), {
+      this.intents.set(this.intentKey(h.accountId, h.market, info.symbol, newDir), {
         dir: newDir,
         hookId: h.id,
         leverage: h.open.leverage,
@@ -408,11 +517,11 @@ export class TradingEngine extends EventEmitter {
         type: c.orderType === 'limit' ? 'LIMIT' : 'MARKET',
         price: c.orderType === 'limit' ? mark : undefined,
         qty: total,
-        reduceOnly: !reverse && h.market === 'futures',
+        ...(reverse ? {} : this.closeParams(position)),
       });
       return `${reverse ? 'reverse' : 'close'} ${side} ${total} ${info.symbol} (order ${res.orderId}, ${res.status})`;
     } catch (e) {
-      if (reverse) this.intents.delete(this.key(h.accountId, h.market, info.symbol));
+      if (reverse) this.intents.delete(this.intentKey(h.accountId, h.market, info.symbol, newDir));
       throw e;
     }
   }
@@ -446,14 +555,28 @@ export class TradingEngine extends EventEmitter {
     if (!q) throw new Error(`Quantity ${input.qty} is below the exchange minimum`);
 
     const dir: PositionDir = input.side === 'buy' ? 'long' : 'short';
+    const hedge = this.isHedge(input.accountId, input.market);
+    // In hedge mode a reducing buy closes the short side, a reducing sell
+    // the long side; opening orders act on their own side.
+    const positionSide = hedge
+      ? input.reduceOnly
+        ? input.side === 'buy'
+          ? 'SHORT'
+          : 'LONG'
+        : dir === 'long'
+          ? 'LONG'
+          : 'SHORT'
+      : undefined;
     if (input.market === 'futures') {
       if (input.leverage) await adapter.setLeverage(input.symbol, input.leverage).catch(() => {});
       if (input.marginMode) await adapter.setMarginMode(input.symbol, input.marginMode).catch(() => {});
     }
     // Spot sells reduce holdings — never an opening intent for a "short".
     const opensPosition = !input.reduceOnly && !(input.market === 'spot' && input.side === 'sell');
+    const ikey = this.intentKey(input.accountId, input.market, input.symbol, dir);
+    let intent: PendingIntent | undefined;
     if (opensPosition) {
-      this.intents.set(this.key(input.accountId, input.market, input.symbol), {
+      intent = {
         dir,
         hookId: undefined,
         leverage: input.leverage ?? 1,
@@ -464,11 +587,37 @@ export class TradingEngine extends EventEmitter {
           slx: input.slx ?? { ...defaultSlxModule(), enabled: false },
         },
         createdAt: Date.now(),
-      });
+      };
+      this.intents.set(ikey, intent);
       adapter.watchPrice(input.symbol);
     }
 
     try {
+      if (input.grid && opensPosition) {
+        const levels = planGrid(input.grid, dir, price, input.qty, info);
+        if (levels.length === 0) throw new Error('No grid orders above the exchange minimums');
+        intent!.entryOrderIds = [];
+        for (const lvl of levels) {
+          const res = await adapter.placeOrder({
+            symbol: input.symbol,
+            side: input.side === 'buy' ? 'BUY' : 'SELL',
+            type: 'LIMIT',
+            qty: lvl.qty,
+            price: lvl.price,
+            positionSide,
+          });
+          intent!.entryOrderIds.push(res.orderId);
+        }
+        if (!this.intents.has(ikey)) {
+          const pos = this.db.openPositionFor(input.accountId, input.market, input.symbol, hedge ? dir : undefined);
+          if (pos) {
+            pos.entryOrderIds = [...new Set([...(pos.entryOrderIds ?? []), ...intent!.entryOrderIds])];
+            this.db.upsertPosition(pos);
+          }
+        }
+        this.changed();
+        return `grid:${levels.length}`;
+      }
       const res = await adapter.placeOrder({
         symbol: input.symbol,
         side: input.side === 'buy' ? 'BUY' : 'SELL',
@@ -476,12 +625,13 @@ export class TradingEngine extends EventEmitter {
         qty: q.qty,
         price: input.type === 'limit' ? q.price : undefined,
         stopPrice: input.type === 'stop_market' ? input.stopPrice ?? q.price : undefined,
-        reduceOnly: input.reduceOnly && input.market === 'futures',
+        reduceOnly: input.reduceOnly && input.market === 'futures' && !hedge,
+        positionSide,
       });
       this.changed();
       return res.orderId;
     } catch (e) {
-      if (opensPosition) this.intents.delete(this.key(input.accountId, input.market, input.symbol));
+      if (opensPosition) this.intents.delete(ikey);
       throw e;
     }
   }
@@ -503,7 +653,7 @@ export class TradingEngine extends EventEmitter {
       side: pos.side === 'long' ? 'SELL' : 'BUY',
       type: 'MARKET',
       qty,
-      reduceOnly: pos.market === 'futures',
+      ...this.closeParams(pos),
     });
   }
 
@@ -513,15 +663,22 @@ export class TradingEngine extends EventEmitter {
 
   private async handleFill(adapter: ExchangeAdapter, fill: FillEvent): Promise<void> {
     const { accountId, market } = adapter;
-    const key = this.key(accountId, market, fill.symbol);
-    let pos = this.db.openPositionFor(accountId, market, fill.symbol);
+    const hedge = this.isHedge(accountId, market);
     const fillDir: PositionDir = fill.side === 'BUY' ? 'long' : 'short';
+    // Hedge fills name their dual-position side; look up that side only.
+    const posSide: PositionDir | undefined = hedge
+      ? fill.positionSide === 'SHORT'
+        ? 'short'
+        : 'long'
+      : undefined;
+    let pos = this.db.openPositionFor(accountId, market, fill.symbol, posSide);
+    const ikey = this.intentKey(accountId, market, fill.symbol, posSide ?? fillDir);
 
     if (!pos) {
-      const intent = this.intents.get(key);
+      const intent = this.intents.get(ikey);
       if (!intent || intent.dir !== fillDir) return; // external or stale fill
       pos = this.createPosition(accountId, market, fill, intent);
-      this.intents.delete(key);
+      this.intents.delete(ikey);
       this.log('info', `position opened: ${pos.side} ${pos.qty} ${pos.symbol} @ ${pos.entryPrice}`);
       await this.applyProtection(adapter, pos);
       this.changed();
@@ -530,6 +687,9 @@ export class TradingEngine extends EventEmitter {
 
     if (fillDir === pos.side) {
       // Averaging fill: grow position, recompute average, reorder TP/SL.
+      if (pos.entryOrderIds?.includes(fill.orderId)) {
+        pos.entryOrderIds = pos.entryOrderIds.filter((id) => id !== fill.orderId);
+      }
       const total = pos.qty + fill.qty;
       pos.entryPrice = (pos.entryPrice * pos.qty + fill.price * fill.qty) / total;
       pos.qty = Number(total.toFixed(10));
@@ -561,12 +721,14 @@ export class TradingEngine extends EventEmitter {
       this.db.markClosed(pos, pos.realizedPnl);
       this.log('info', `position closed: ${pos.symbol} PnL ${pos.realizedPnl.toFixed(4)}`);
       this.changed();
-      // Remainder of a reversal fill opens the opposite position.
+      // Remainder of a reversal fill opens the opposite position (one-way
+      // mode only — hedge positions never flip through zero).
       const rest = fill.qty - reduce;
-      const intent = this.intents.get(key);
-      if (rest > 0 && intent && intent.dir === fillDir) {
+      const rkey = this.intentKey(accountId, market, fill.symbol, fillDir);
+      const intent = this.intents.get(rkey);
+      if (!hedge && rest > 0 && intent && intent.dir === fillDir) {
         const newPos = this.createPosition(accountId, market, { ...fill, qty: rest }, intent);
-        this.intents.delete(key);
+        this.intents.delete(rkey);
         this.log('info', `position reversed: now ${newPos.side} ${newPos.qty} ${newPos.symbol}`);
         await this.applyProtection(adapter, newPos);
         this.changed();
@@ -598,6 +760,7 @@ export class TradingEngine extends EventEmitter {
       tpOrderIds: [],
       tpFilledCount: 0,
       config: intent.config,
+      entryOrderIds: intent.entryOrderIds?.filter((id) => id !== fill.orderId),
     };
     this.db.upsertPosition(pos);
     return pos;
@@ -651,7 +814,7 @@ export class TradingEngine extends EventEmitter {
             type: 'LIMIT',
             qty: o.qty,
             price: o.price,
-            reduceOnly: pos.market === 'futures',
+            ...this.closeParams(pos),
           })
           .catch((e) => {
             this.log('error', `TP order failed for ${pos.symbol}: ${e}`);
@@ -702,7 +865,7 @@ export class TradingEngine extends EventEmitter {
           type: 'STOP_MARKET',
           qty: pos.qty,
           stopPrice: price,
-          reduceOnly: true,
+          ...this.closeParams(pos),
         })
         .catch((e) => {
           this.log('error', `SL order failed for ${pos.symbol}: ${e}`);
@@ -719,10 +882,13 @@ export class TradingEngine extends EventEmitter {
   private async cancelProtection(adapter: ExchangeAdapter, pos: ManagedPosition): Promise<void> {
     for (const id of pos.tpOrderIds) await adapter.cancelOrder(pos.symbol, id).catch(() => {});
     if (pos.slOrderId) await adapter.cancelOrder(pos.symbol, pos.slOrderId).catch(() => {});
+    // Leftover (unfilled) grid entry orders die with the position.
+    for (const id of pos.entryOrderIds ?? []) await adapter.cancelOrder(pos.symbol, id).catch(() => {});
     pos.tpOrderIds = [];
     pos.slOrderId = undefined;
     pos.virtualTp = undefined;
     pos.virtualSlPrice = undefined;
+    pos.entryOrderIds = undefined;
   }
 
   private async maybeMoveBreakeven(adapter: ExchangeAdapter, pos: ManagedPosition): Promise<void> {
@@ -744,8 +910,21 @@ export class TradingEngine extends EventEmitter {
   // ------------------------------------------------------------------
 
   private async handlePriceTick(adapter: ExchangeAdapter, symbol: string, price: number): Promise<void> {
-    const pos = this.db.openPositionFor(adapter.accountId, adapter.market, symbol);
-    if (!pos) return;
+    // Hedge mode can hold both a long and a short on the same pair.
+    const targets = this.db
+      .openPositions(adapter.accountId)
+      .filter((p) => p.market === adapter.market && p.symbol === symbol);
+    for (const pos of targets) {
+      await this.handlePositionTick(adapter, pos, symbol, price);
+    }
+  }
+
+  private async handlePositionTick(
+    adapter: ExchangeAdapter,
+    pos: ManagedPosition,
+    symbol: string,
+    price: number,
+  ): Promise<void> {
     const busyKey = `${pos.id}`;
     if (this.trailingBusy.has(busyKey)) return;
     this.trailingBusy.add(busyKey);
@@ -765,7 +944,7 @@ export class TradingEngine extends EventEmitter {
                 side: pos.side === 'long' ? 'SELL' : 'BUY',
                 type: 'MARKET',
                 qty: Math.min(o.qty, pos.qty),
-                reduceOnly: pos.market === 'futures',
+                ...this.closeParams(pos),
               })
               .catch((e) => this.log('error', `virtual TP failed: ${e}`));
             pos.tpFilledCount += 1;

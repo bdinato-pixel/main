@@ -105,6 +105,7 @@ export function buildRouter(engine: TradingEngine): Router {
         apiKey: z.string().default(''),
         apiSecret: z.string().default(''),
         paperBalanceUsd: z.number().default(10_000),
+        hedgeMode: z.boolean().default(false),
       })
       .safeParse(req.body);
     if (!body.success) return res.status(400).json({ error: body.error.message });
@@ -115,6 +116,24 @@ export function buildRouter(engine: TradingEngine): Router {
     };
     db.settings.accounts.push(account);
     db.save();
+    res.json({ ...account, apiSecret: account.apiSecret ? '•••' : '' });
+  });
+
+  r.put('/api/accounts/:id', async (req, res) => {
+    const body = z
+      .object({
+        label: z.string().min(1).optional(),
+        hedgeMode: z.boolean().optional(),
+        paperBalanceUsd: z.number().optional(),
+      })
+      .safeParse(req.body);
+    if (!body.success) return res.status(400).json({ error: body.error.message });
+    const account = db.settings.accounts.find((a) => a.id === req.params.id);
+    if (!account) return res.status(404).json({ error: 'not found' });
+    Object.assign(account, body.data);
+    db.save();
+    // Recreate adapters so the futures position mode is re-applied.
+    if (body.data.hedgeMode !== undefined) await engine.resetAccount(account.id);
     res.json({ ...account, apiSecret: account.apiSecret ? '•••' : '' });
   });
 
@@ -197,6 +216,15 @@ export function buildRouter(engine: TradingEngine): Router {
       reduceOnly: z.boolean().optional(),
       leverage: z.number().int().min(1).max(125).optional(),
       marginMode: z.enum(['cross', 'isolated']).optional(),
+      grid: z
+        .object({
+          count: z.number().int().min(2).max(30),
+          firstOfsPct: z.number().min(0),
+          lastOfsPct: z.number().min(0),
+          qtyFactor: z.number().positive().default(1),
+          density: z.number().positive().default(1),
+        })
+        .optional(),
       tp: z.any().optional(),
       sl: z.any().optional(),
       slx: z.any().optional(),

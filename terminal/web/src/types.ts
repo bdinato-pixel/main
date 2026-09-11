@@ -13,6 +13,14 @@ export interface TpOrderSpec {
   piecePct: number;
 }
 
+export interface GridConfig {
+  count: number;
+  firstOfsPct: number;
+  lastOfsPct: number;
+  qtyFactor: number;
+  density: number;
+}
+
 export interface Hook {
   id: string;
   name: string;
@@ -25,6 +33,8 @@ export interface Hook {
     enabled: boolean;
     amount: AmountSpec;
     orderType: string;
+    entry?: 'single' | 'grid';
+    grid?: GridConfig;
     priceOffsetPct: number;
     leverage: number;
     marginMode: 'cross' | 'isolated';
@@ -41,6 +51,8 @@ export interface Hook {
     enabled: boolean;
     amount: AmountSpec;
     orderType: string;
+    entry?: 'single' | 'grid';
+    grid?: GridConfig;
     priceOffsetPct: number;
     maxPositionVolumeUsd: number;
     allowWithOpenDcaOrders: boolean;
@@ -154,6 +166,7 @@ export interface Account {
   apiKey: string;
   apiSecret: string;
   paperBalanceUsd: number;
+  hedgeMode?: boolean;
 }
 
 export interface Settings {

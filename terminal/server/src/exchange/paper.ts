@@ -70,9 +70,11 @@ interface PaperPosition {
   entryPrice: number;
   leverage: number;
   marginMode: 'cross' | 'isolated';
+  positionSide?: 'LONG' | 'SHORT';
 }
 
 interface PaperOrder extends OpenOrder {
+  positionSide?: 'LONG' | 'SHORT';
   triggered?: boolean;
 }
 
@@ -90,6 +92,7 @@ export class PaperAdapter implements ExchangeAdapter {
   private marginModes = new Map<string, 'cross' | 'isolated'>();
   private fillCbs: ((fill: FillEvent) => void)[] = [];
   private symbolsCache = new Map<string, SymbolInfo>();
+  private hedge = false;
 
   constructor(
     readonly market: MarketType,
@@ -130,9 +133,19 @@ export class PaperAdapter implements ExchangeAdapter {
         unrealizedPnl: (mark - p.entryPrice) * p.qty,
         leverage: p.leverage,
         marginMode: p.marginMode,
+        positionSide: p.positionSide,
       });
     }
     return out;
+  }
+
+  async setPositionMode(dual: boolean): Promise<void> {
+    this.hedge = dual && this.market === 'futures';
+  }
+
+  /** Positions are keyed per side in hedge mode, per symbol in one-way. */
+  private posKey(symbol: string, positionSide?: 'LONG' | 'SHORT'): string {
+    return this.hedge ? `${symbol}:${positionSide ?? 'LONG'}` : symbol;
   }
 
   async getOpenOrders(symbol?: string): Promise<OpenOrder[]> {
@@ -162,6 +175,7 @@ export class PaperAdapter implements ExchangeAdapter {
       origQty: qty,
       executedQty: 0,
       reduceOnly: req.reduceOnly ?? false,
+      positionSide: req.positionSide,
       clientId: req.clientId,
       time: Date.now(),
     };
@@ -183,8 +197,9 @@ export class PaperAdapter implements ExchangeAdapter {
 
   async setLeverage(symbol: string, leverage: number): Promise<void> {
     this.leverage.set(symbol, leverage);
-    const pos = this.positions.get(symbol);
-    if (pos) pos.leverage = leverage;
+    for (const pos of this.positions.values()) {
+      if (pos.symbol === symbol) pos.leverage = leverage;
+    }
   }
 
   async setMarginMode(symbol: string, mode: 'cross' | 'isolated'): Promise<void> {
@@ -237,7 +252,14 @@ export class PaperAdapter implements ExchangeAdapter {
       if (fillAt !== null) {
         this.orders = this.orders.filter((x) => x.orderId !== o.orderId);
         this.fill(
-          { symbol: o.symbol, side: o.side, type: 'MARKET', qty: o.origQty, reduceOnly: o.reduceOnly },
+          {
+            symbol: o.symbol,
+            side: o.side,
+            type: 'MARKET',
+            qty: o.origQty,
+            reduceOnly: o.reduceOnly,
+            positionSide: o.positionSide,
+          },
           o.origQty,
           fillAt,
           o.orderId,
@@ -248,17 +270,25 @@ export class PaperAdapter implements ExchangeAdapter {
 
   private fill(req: OrderRequest, qty: number, price: number, orderId: string): void {
     const signed = req.side === 'BUY' ? qty : -qty;
+    const ps = this.hedge && this.market === 'futures'
+      ? req.positionSide ?? (req.side === 'BUY' ? 'LONG' : 'SHORT')
+      : undefined;
     if (this.market === 'futures') {
-      const pos = this.positions.get(req.symbol) ?? {
+      const key = this.posKey(req.symbol, ps);
+      const pos = this.positions.get(key) ?? {
         symbol: req.symbol,
         qty: 0,
         entryPrice: 0,
         leverage: this.leverage.get(req.symbol) ?? 5,
         marginMode: this.marginModes.get(req.symbol) ?? 'cross',
+        positionSide: ps,
       };
       let fillQty = signed;
-      if (req.reduceOnly) {
-        // Clamp reduce-only fills so they only shrink |position| toward zero.
+      // In hedge mode an order against its positionSide can only reduce it
+      // (Binance never flips a dual-side position), same as reduce-only.
+      const clampReduce = req.reduceOnly || (ps === 'LONG' && signed < 0) || (ps === 'SHORT' && signed > 0);
+      if (clampReduce) {
+        // Clamp reducing fills so they only shrink |position| toward zero.
         if (pos.qty > 0) fillQty = Math.max(-pos.qty, Math.min(0, signed));
         else if (pos.qty < 0) fillQty = Math.min(-pos.qty, Math.max(0, signed));
         else fillQty = 0;
@@ -280,8 +310,8 @@ export class PaperAdapter implements ExchangeAdapter {
         pos.entryPrice = total > 0 ? (pos.entryPrice * Math.abs(pos.qty) + price * Math.abs(fillQty)) / total : 0;
       }
       pos.qty = Number(newQty.toFixed(10));
-      if (pos.qty === 0) this.positions.delete(req.symbol);
-      else this.positions.set(req.symbol, pos);
+      if (pos.qty === 0) this.positions.delete(key);
+      else this.positions.set(key, pos);
     } else {
       // Spot: swap base and quote balances.
       const info = this.symbolsCache.get(req.symbol);
@@ -305,6 +335,7 @@ export class PaperAdapter implements ExchangeAdapter {
         price,
         orderId,
         reduceOnly: req.reduceOnly ?? false,
+        positionSide: ps,
         time: Date.now(),
       }),
     );

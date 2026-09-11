@@ -11,9 +11,13 @@ const opposite = (d: PositionDir): PositionDir => (d === 'long' ? 'short' : 'lon
 
 /**
  * Finandy's signal processing table. `position` is the open managed position
- * on the signal's pair (one-way mode), if any.
+ * the signal acts on: in one-way mode the pair's only position, in hedge
+ * mode the position on the side the hook/signal targets (see
+ * `relevantSide`). In hedge mode "Both" hooks open/average each side
+ * independently and never close (per Finandy's hedging docs); reversal is
+ * unavailable and downgrades to a close.
  */
-export function decide(hook: Hook, signal: Signal, position: ManagedPosition | undefined): Decision {
+export function decide(hook: Hook, signal: Signal, position: ManagedPosition | undefined, hedge = false): Decision {
   const sigDir: PositionDir = signal.side === 'buy' ? 'long' : 'short';
 
   // TP update signals modify an open position and nothing else.
@@ -47,7 +51,7 @@ export function decide(hook: Hook, signal: Signal, position: ManagedPosition | u
       return closeOrIgnore(hook, position.side, 'partial exit (strategy retains position)');
     }
     // Target is the opposite direction → reversal.
-    return reverseOrClose(hook, position.side);
+    return reverseOrClose(hook, position.side, hedge);
   }
 
   if (!position) {
@@ -59,8 +63,25 @@ export function decide(hook: Hook, signal: Signal, position: ManagedPosition | u
   if (sigDir === position.side) return dcaOrIgnore(hook, position.side);
 
   // Opposite signal on an open position → close (or reverse, in "both" mode).
-  if (mode === 'both') return reverseOrClose(hook, position.side);
+  if (mode === 'both') return reverseOrClose(hook, position.side, hedge);
   return closeOrIgnore(hook, position.side, `close ${position.side} on ${signal.side} signal`);
+}
+
+/**
+ * Which dual-side position a signal acts on in hedge mode: the hook's fixed
+ * side for long/short-only hooks, the strategy's target side, or the signal
+ * direction for "Both" hooks (each side runs independently).
+ */
+export function relevantSide(hook: Hook, signal: Signal): PositionDir | undefined {
+  if (signal.positionSide === 'flat') return undefined; // any open side
+  const mode = hook.open.positionMode;
+  if (mode === 'long_only') return 'long';
+  if (mode === 'short_only') return 'short';
+  if (mode === 'strategy') {
+    if (signal.positionSide === 'long' || signal.positionSide === 'short') return signal.positionSide;
+    return signal.side === 'buy' ? 'long' : 'short';
+  }
+  return signal.side === 'buy' ? 'long' : 'short';
 }
 
 function openOrIgnore(hook: Hook, dir: PositionDir): Decision {
@@ -78,9 +99,11 @@ function closeOrIgnore(hook: Hook, dir: PositionDir, reason: string): Decision {
   return { action: 'close', dir, reason };
 }
 
-function reverseOrClose(hook: Hook, dir: PositionDir): Decision {
+function reverseOrClose(hook: Hook, dir: PositionDir, hedge: boolean): Decision {
   if (!hook.close.enabled) return { action: 'ignore', dir, reason: 'close module disabled' };
-  if (hook.close.reverse && hook.market === 'futures') {
+  // Reversal exists only in one-way futures mode (Finandy: "only available
+  // for the Futures Market in one-way mode").
+  if (hook.close.reverse && hook.market === 'futures' && !hedge) {
     return { action: 'reverse', dir, reason: `reverse ${dir} → ${opposite(dir)}` };
   }
   return { action: 'close', dir, reason: `close ${dir} on opposite signal` };

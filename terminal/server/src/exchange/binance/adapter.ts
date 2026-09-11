@@ -123,6 +123,7 @@ export class BinanceAdapter implements ExchangeAdapter {
         unRealizedProfit: string;
         leverage: string;
         marginType: string;
+        positionSide?: string;
       }[]
     >('GET', '/fapi/v2/positionRisk');
     return raw
@@ -135,6 +136,8 @@ export class BinanceAdapter implements ExchangeAdapter {
         unrealizedPnl: Number(p.unRealizedProfit),
         leverage: Number(p.leverage),
         marginMode: p.marginType === 'isolated' ? 'isolated' : 'cross',
+        positionSide:
+          p.positionSide === 'LONG' || p.positionSide === 'SHORT' ? (p.positionSide as 'LONG' | 'SHORT') : undefined,
       }));
   }
 
@@ -187,7 +190,13 @@ export class BinanceAdapter implements ExchangeAdapter {
     if (req.type === 'STOP_MARKET' || req.type === 'TAKE_PROFIT_MARKET' || req.type === 'STOP') {
       params.stopPrice = formatPrice(info, req.stopPrice ?? 0);
     }
-    if (this.market === 'futures' && req.reduceOnly) params.reduceOnly = true;
+    if (this.market === 'futures' && req.positionSide) {
+      // Hedge mode: closing is an opposite-side order carrying positionSide;
+      // Binance rejects an explicit reduceOnly flag in dual-side mode.
+      params.positionSide = req.positionSide;
+    } else if (this.market === 'futures' && req.reduceOnly) {
+      params.reduceOnly = true;
+    }
     const path = this.market === 'spot' ? '/api/v3/order' : '/fapi/v1/order';
     const raw = await this.rest.signed<{
       orderId: number;
@@ -223,6 +232,16 @@ export class BinanceAdapter implements ExchangeAdapter {
     } catch (e) {
       // code -4046: "No need to change margin type" — already set.
       if (!(e instanceof Error && e.message.includes('-4046'))) throw e;
+    }
+  }
+
+  async setPositionMode(dual: boolean): Promise<void> {
+    if (this.market !== 'futures') return;
+    try {
+      await this.rest.signed('POST', '/fapi/v1/positionSide/dual', { dualSidePosition: dual });
+    } catch (e) {
+      // code -4059: "No need to change position side" — already set.
+      if (!(e instanceof Error && e.message.includes('-4059'))) throw e;
     }
   }
 

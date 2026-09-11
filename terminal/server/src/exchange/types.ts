@@ -25,6 +25,8 @@ export interface ExchangePosition {
   unrealizedPnl: number;
   leverage: number;
   marginMode: 'cross' | 'isolated';
+  /** Hedge mode: which side of the dual position this row is. */
+  positionSide?: 'LONG' | 'SHORT';
 }
 
 export type OrderSide = 'BUY' | 'SELL';
@@ -38,6 +40,8 @@ export interface OrderRequest {
   price?: number;
   stopPrice?: number;
   reduceOnly?: boolean;
+  /** Hedge mode: which side of the dual position this order acts on. */
+  positionSide?: 'LONG' | 'SHORT';
   clientId?: string;
 }
 
@@ -86,6 +90,7 @@ export interface FillEvent {
   price: number;
   orderId: string;
   reduceOnly: boolean;
+  positionSide?: 'LONG' | 'SHORT';
   time: number;
 }
 
@@ -107,6 +112,8 @@ export interface ExchangeAdapter {
   cancelOrder(symbol: string, orderId: string): Promise<void>;
   setLeverage(symbol: string, leverage: number): Promise<void>;
   setMarginMode(symbol: string, mode: 'cross' | 'isolated'): Promise<void>;
+  /** Futures dual-side (hedge) position mode; no-op on spot. */
+  setPositionMode(dual: boolean): Promise<void>;
   getPrice(symbol: string): Promise<number>;
   getTickers(): Promise<Ticker[]>;
   getKlines(symbol: string, interval: string, limit: number): Promise<Kline[]>;

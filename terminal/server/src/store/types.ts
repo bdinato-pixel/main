@@ -25,10 +25,37 @@ export interface AmountSpec {
 
 export type EntryOrderType = 'market' | 'limit' | 'stop_market';
 
+/**
+ * Order grid (Finandy "Order grid"): the amount is spread over `count` limit
+ * orders between `firstOfsPct` and `lastOfsPct` from the reference price
+ * (below it for longs, above for shorts).
+ */
+export interface GridConfig {
+  /** Number of orders, 2..30. */
+  count: number;
+  /** Offset % of the order nearest to the reference price. */
+  firstOfsPct: number;
+  /** Offset % of the farthest order. */
+  lastOfsPct: number;
+  /**
+   * Quantity multiplier per successive order (Finandy "Amount factor"):
+   * 1 = even split, 2 = each next order doubles, 0.5 = halves.
+   */
+  qtyFactor: number;
+  /**
+   * Spacing curve (Finandy "Density"): 1 = even spacing, >1 = orders cluster
+   * toward the far edge, <1 = toward the near edge.
+   */
+  density: number;
+}
+
 export interface OpenModule {
   enabled: boolean;
   amount: AmountSpec;
   orderType: EntryOrderType;
+  /** single = one order; grid = spread the amount over a grid of limit orders. */
+  entry: 'single' | 'grid';
+  grid: GridConfig;
   /** For limit/stop entries: % offset from the reference (signal/last) price. */
   priceOffsetPct: number;
   /** Futures only. */
@@ -51,6 +78,8 @@ export interface DcaModule {
   enabled: boolean;
   amount: AmountSpec;
   orderType: EntryOrderType;
+  entry: 'single' | 'grid';
+  grid: GridConfig;
   priceOffsetPct: number;
   /** Skip averaging if position volume + order would exceed this (0 = off). */
   maxPositionVolumeUsd: number;
@@ -218,6 +247,8 @@ export interface ManagedPosition {
   virtualTp?: { price: number; qty: number }[];
   /** Last planned TP levels (used to keep prices when reordering is off). */
   tpLevels?: { price: number; qty: number }[];
+  /** Unfilled entry/DCA grid orders — cancelled when the position closes. */
+  entryOrderIds?: string[];
 }
 
 export interface ExchangeAccount {
@@ -228,6 +259,8 @@ export interface ExchangeAccount {
   apiSecret: string;
   /** Paper accounts simulate fills locally against live or last-known prices. */
   paperBalanceUsd: number;
+  /** Futures dual-side position mode: hold LONG and SHORT on a pair at once. */
+  hedgeMode?: boolean;
   createdAt: number;
 }
 

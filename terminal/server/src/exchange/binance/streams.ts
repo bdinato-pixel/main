@@ -103,6 +103,7 @@ export class BinanceStreams {
           price: Number(o.L), // last filled price
           orderId: String(o.i),
           reduceOnly: Boolean(o.R),
+          positionSide: o.ps === 'LONG' || o.ps === 'SHORT' ? (o.ps as 'LONG' | 'SHORT') : undefined,
           time: Number(msg.E),
         });
       }

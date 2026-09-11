@@ -42,8 +42,16 @@ export const api = {
   settings: () => req<Settings>('/api/settings'),
   saveSettings: (patch: Partial<Settings>) =>
     req<{ ok: boolean }>('/api/settings', { method: 'PUT', body: JSON.stringify(patch) }),
-  addAccount: (data: { label: string; exchange: string; apiKey: string; apiSecret: string; paperBalanceUsd: number }) =>
-    req('/api/accounts', { method: 'POST', body: JSON.stringify(data) }),
+  addAccount: (data: {
+    label: string;
+    exchange: string;
+    apiKey: string;
+    apiSecret: string;
+    paperBalanceUsd: number;
+    hedgeMode: boolean;
+  }) => req('/api/accounts', { method: 'POST', body: JSON.stringify(data) }),
+  updateAccount: (id: string, patch: { label?: string; hedgeMode?: boolean; paperBalanceUsd?: number }) =>
+    req(`/api/accounts/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
   deleteAccount: (id: string) => req(`/api/accounts/${id}`, { method: 'DELETE' }),
 
   accountState: (account: string, market: MarketType) =>

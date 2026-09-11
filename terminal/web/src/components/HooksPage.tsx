@@ -1,7 +1,27 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { useStore } from '../store';
-import type { Hook, MarketType } from '../types';
+import type { GridConfig, Hook, MarketType } from '../types';
+
+const DEFAULT_GRID: GridConfig = { count: 4, firstOfsPct: 0.5, lastOfsPct: 3, qtyFactor: 1, density: 1 };
+
+function GridFields({ grid, onChange }: { grid: GridConfig; onChange: (g: GridConfig) => void }) {
+  const num = (v: string) => Number(v);
+  return (
+    <div className="row">
+      <label>Orders</label>
+      <input type="number" min={2} max={30} value={grid.count} onChange={(e) => onChange({ ...grid, count: num(e.target.value) })} />
+      <label>First %</label>
+      <input type="number" value={grid.firstOfsPct} onChange={(e) => onChange({ ...grid, firstOfsPct: num(e.target.value) })} />
+      <label>Last %</label>
+      <input type="number" value={grid.lastOfsPct} onChange={(e) => onChange({ ...grid, lastOfsPct: num(e.target.value) })} />
+      <label title="Each next order's quantity is multiplied by this (1 = even)">Qty ×</label>
+      <input type="number" step={0.1} value={grid.qtyFactor} onChange={(e) => onChange({ ...grid, qtyFactor: num(e.target.value) })} />
+      <label title="1 = even spacing, >1 clusters orders toward the far edge, <1 toward the near edge">Density</label>
+      <input type="number" step={0.1} value={grid.density} onChange={(e) => onChange({ ...grid, density: num(e.target.value) })} />
+    </div>
+  );
+}
 
 export function HooksPage() {
   const { hooks, loadHooks, settings, setError } = useStore();
@@ -204,23 +224,43 @@ function HookEditor({ hook }: { hook: Hook }) {
             value={draft.open.amount.value}
             onChange={(e) => patch((d) => (d.open.amount.value = Number(e.target.value)))}
           />
-          <label>Order</label>
-          <select value={draft.open.orderType} onChange={(e) => patch((d) => (d.open.orderType = e.target.value))}>
-            <option value="market">Market</option>
-            <option value="limit">Limit</option>
-            <option value="stop_market">Stop-Market</option>
+          <label>Entry</label>
+          <select
+            value={draft.open.entry ?? 'single'}
+            onChange={(e) =>
+              patch((d) => {
+                d.open.entry = e.target.value as 'single' | 'grid';
+                if (d.open.entry === 'grid' && !d.open.grid) d.open.grid = DEFAULT_GRID;
+              })
+            }
+          >
+            <option value="single">Single order</option>
+            <option value="grid">Order grid</option>
           </select>
-          {draft.open.orderType !== 'market' && (
+          {(draft.open.entry ?? 'single') === 'single' && (
             <>
-              <label>Offset %</label>
-              <input
-                type="number"
-                value={draft.open.priceOffsetPct}
-                onChange={(e) => patch((d) => (d.open.priceOffsetPct = Number(e.target.value)))}
-              />
+              <label>Order</label>
+              <select value={draft.open.orderType} onChange={(e) => patch((d) => (d.open.orderType = e.target.value))}>
+                <option value="market">Market</option>
+                <option value="limit">Limit</option>
+                <option value="stop_market">Stop-Market</option>
+              </select>
+              {draft.open.orderType !== 'market' && (
+                <>
+                  <label>Offset %</label>
+                  <input
+                    type="number"
+                    value={draft.open.priceOffsetPct}
+                    onChange={(e) => patch((d) => (d.open.priceOffsetPct = Number(e.target.value)))}
+                  />
+                </>
+              )}
             </>
           )}
         </div>
+        {draft.open.entry === 'grid' && (
+          <GridFields grid={draft.open.grid ?? DEFAULT_GRID} onChange={(g) => patch((d) => (d.open.grid = g))} />
+        )}
         {draft.market === 'futures' && (
           <div className="row">
             <label>Leverage</label>
@@ -290,7 +330,23 @@ function HookEditor({ hook }: { hook: Hook }) {
             value={draft.dca.maxPositionVolumeUsd}
             onChange={(e) => patch((d) => (d.dca.maxPositionVolumeUsd = Number(e.target.value)))}
           />
+          <label>Entry</label>
+          <select
+            value={draft.dca.entry ?? 'single'}
+            onChange={(e) =>
+              patch((d) => {
+                d.dca.entry = e.target.value as 'single' | 'grid';
+                if (d.dca.entry === 'grid' && !d.dca.grid) d.dca.grid = DEFAULT_GRID;
+              })
+            }
+          >
+            <option value="single">Single order</option>
+            <option value="grid">Order grid</option>
+          </select>
         </div>
+        {draft.dca.entry === 'grid' && (
+          <GridFields grid={draft.dca.grid ?? DEFAULT_GRID} onChange={(g) => patch((d) => (d.dca.grid = g))} />
+        )}
       </div>
 
       <div className="card">

@@ -22,7 +22,13 @@ terminal/
 - Candlestick chart (lightweight-charts) with entry / TP / SL / trailing lines
 - Market, limit and stop-market orders; size in USDT, tokens, or % of free
   balance (× leverage on futures)
+- **Order grids**: spread an amount over 2–30 limit orders across a % range,
+  with a per-order quantity multiplier and a density curve for spacing;
+  unfilled levels are cancelled automatically when the position closes
 - Leverage and cross/isolated margin control per order
+- **Hedge mode** (futures dual-side): hold a long and a short on the same
+  pair simultaneously, each with its own TP/SL/trailing lifecycle —
+  switchable per account in Settings
 - Positions, open orders, balances, signal log and trade history tables
 - Paper-trading account (simulated fills against live Binance prices) — try
   everything with zero risk before adding an API key
@@ -42,6 +48,11 @@ terminal/
 - **Stop Loss** (% offset or absolute), recomputed after averaging
 - **Trailing stop (SLX)**: arms at an activation profit %, trails the best
   price, optional move-SL-to-breakeven after N TP fills
+- Entry and DCA order grids per hook (same grid engine as manual trading)
+- Hedge-mode hooks: Long-only / Short-only / Strategy hooks manage their own
+  side of a dual position; a "Both" hook opens each side independently
+  (per Finandy's hedging docs closes are not recognized in Both mode, and
+  reversal exists only in one-way mode)
 - Limits: open timeout, max open positions, max total/hook volume,
   whitelist/blacklist
 - Option-in-signal control: check a box per option to take its value from the
@@ -147,9 +158,10 @@ close / reverse / trailing lifecycles.
 
 ## Current limitations (vs. Finandy)
 
-- One-way position mode only (no hedge mode double positions yet)
-- Order grids / Fibonacci grids, floating orders and Martingale are not
-  implemented yet — single orders per action
+- Fibonacci grids, grid auto-update levels, floating orders and Martingale
+  are not implemented yet
+- Switching one-way ↔ hedge on Binance requires no open futures positions
+  (exchange rule); switch it in Settings only when flat
 - Binance only (adapter interface is exchange-agnostic; Bybit/OKX would be
   new adapters), plus the built-in paper exchange
 - Spot SL is virtual (monitored server-side) since Binance spot cannot hold

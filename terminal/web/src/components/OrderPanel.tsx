@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { api } from '../api';
 import { useStore } from '../store';
-import type { TpOrderSpec } from '../types';
+import type { GridConfig, TpOrderSpec } from '../types';
 
 type SizeUnit = 'usd' | 'base' | 'freePct';
 
@@ -20,6 +20,8 @@ export function OrderPanel() {
   const [reduceOnly, setReduceOnly] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  const [gridOn, setGridOn] = useState(false);
+  const [grid, setGrid] = useState<GridConfig>({ count: 4, firstOfsPct: 0.5, lastOfsPct: 3, qtyFactor: 1, density: 1 });
   const [tpOn, setTpOn] = useState(false);
   const [tpOrders, setTpOrders] = useState<TpOrderSpec[]>([{ ofsPct: 1, price: 0, piecePct: 100 }]);
   const [slOn, setSlOn] = useState(false);
@@ -57,6 +59,7 @@ export function OrderPanel() {
         reduceOnly: reduceOnly || undefined,
         leverage: market === 'futures' ? leverage : undefined,
         marginMode: market === 'futures' ? marginMode : undefined,
+        grid: gridOn && !reduceOnly ? grid : undefined,
         tp: tpOn
           ? { enabled: true, orderType: 'limit', orders: tpOrders, reorderLevels: true, updateBySignal: false }
           : undefined,
@@ -129,6 +132,31 @@ export function OrderPanel() {
           </label>
         </div>
       )}
+
+      <div className="module">
+        <div className="module-head" onClick={() => setGridOn(!gridOn)}>
+          <input type="checkbox" checked={gridOn} readOnly /> Order grid
+        </div>
+        {gridOn && (
+          <>
+            <div className="row">
+              <label>Orders</label>
+              <input type="number" min={2} max={30} value={grid.count} onChange={(e) => setGrid({ ...grid, count: Number(e.target.value) })} />
+              <label>Qty ×</label>
+              <input type="number" step={0.1} value={grid.qtyFactor} onChange={(e) => setGrid({ ...grid, qtyFactor: Number(e.target.value) })} />
+            </div>
+            <div className="row">
+              <label>First %</label>
+              <input type="number" step={0.1} value={grid.firstOfsPct} onChange={(e) => setGrid({ ...grid, firstOfsPct: Number(e.target.value) })} />
+              <label>Last %</label>
+              <input type="number" step={0.1} value={grid.lastOfsPct} onChange={(e) => setGrid({ ...grid, lastOfsPct: Number(e.target.value) })} />
+            </div>
+            <div className="row dim" style={{ fontSize: 12 }}>
+              {grid.count} limit orders spread {grid.firstOfsPct}–{grid.lastOfsPct}% {side === 'buy' ? 'below' : 'above'} price
+            </div>
+          </>
+        )}
+      </div>
 
       <div className="module">
         <div className="module-head" onClick={() => setTpOn(!tpOn)}>

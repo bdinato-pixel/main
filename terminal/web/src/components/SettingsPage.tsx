@@ -9,13 +9,14 @@ export function SettingsPage() {
   const [apiKey, setApiKey] = useState('');
   const [apiSecret, setApiSecret] = useState('');
   const [paperBalance, setPaperBalance] = useState(10_000);
+  const [hedgeMode, setHedgeMode] = useState(false);
   const [ips, setIps] = useState(settings?.allowedSignalIps.join(', ') ?? '');
 
   if (!settings) return <div className="page dim">Loading…</div>;
 
   const addAccount = async () => {
     try {
-      await api.addAccount({ label, exchange, apiKey, apiSecret, paperBalanceUsd: paperBalance });
+      await api.addAccount({ label, exchange, apiKey, apiSecret, paperBalanceUsd: paperBalance, hedgeMode });
       setLabel('');
       setApiKey('');
       setApiSecret('');
@@ -45,6 +46,7 @@ export function SettingsPage() {
               <th>Label</th>
               <th>Exchange</th>
               <th>API key</th>
+              <th>Futures mode</th>
               <th />
             </tr>
           </thead>
@@ -56,6 +58,15 @@ export function SettingsPage() {
                 </td>
                 <td>{a.exchange}</td>
                 <td className="mono dim">{a.apiKey ? `${a.apiKey.slice(0, 6)}…` : a.exchange === 'paper' ? `$${a.paperBalanceUsd} simulated` : '—'}</td>
+                <td>
+                  <button
+                    className="ghost"
+                    title="One-way holds one net position per pair; hedge holds a long and a short simultaneously. Switch only with no open futures positions."
+                    onClick={() => void api.updateAccount(a.id, { hedgeMode: !a.hedgeMode }).then(() => refreshAll())}
+                  >
+                    {a.hedgeMode ? 'Hedge (dual-side)' : 'One-way'} ⇄
+                  </button>
+                </td>
                 <td>
                   {a.id !== settings.activeAccountId && (
                     <>
@@ -108,6 +119,12 @@ export function SettingsPage() {
             <input type="number" value={paperBalance} onChange={(e) => setPaperBalance(Number(e.target.value))} />
           </div>
         )}
+        <div className="row">
+          <label title="Hold a long and a short on the same pair at once (Binance dual-side position mode)">
+            <input type="checkbox" checked={hedgeMode} onChange={(e) => setHedgeMode(e.target.checked)} /> Hedge mode
+            (futures dual-side)
+          </label>
+        </div>
         <button className="primary" disabled={!label} onClick={() => void addAccount()}>
           Add account
         </button>

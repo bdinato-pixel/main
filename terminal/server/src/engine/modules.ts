@@ -1,6 +1,52 @@
-import type { PositionDir, SlModule, SlxModule, TpModule } from '../store/types.js';
+import type { GridConfig, PositionDir, SlModule, SlxModule, TpModule } from '../store/types.js';
 import type { SymbolInfo } from '../exchange/types.js';
 import { quantizePrice, quantizeQty } from './quantizer.js';
+
+export interface PlannedGridOrder {
+  price: number;
+  qty: number;
+}
+
+/**
+ * Plan a grid of limit orders (Finandy "Order grid"): `totalQty` base units
+ * spread over `grid.count` orders between firstOfsPct and lastOfsPct from
+ * the reference price — below it for longs, above for shorts. Quantities
+ * follow qtyFactor (1 = even, 2 = each next order doubles); spacing follows
+ * the density curve (1 = even, >1 clusters toward the far edge, <1 toward
+ * the near edge). Orders that fall below exchange minimums are dropped,
+ * mirroring how exchanges reject them.
+ */
+export function planGrid(
+  grid: GridConfig,
+  dir: PositionDir,
+  refPrice: number,
+  totalQty: number,
+  info: SymbolInfo,
+): PlannedGridOrder[] {
+  const count = Math.max(2, Math.min(30, Math.round(grid.count)));
+  if (totalQty <= 0 || refPrice <= 0) return [];
+  const sign = dir === 'long' ? -1 : 1;
+  const density = grid.density > 0 ? grid.density : 1;
+  const factor = grid.qtyFactor > 0 ? grid.qtyFactor : 1;
+  const first = Math.max(0, grid.firstOfsPct);
+  const last = Math.max(first, grid.lastOfsPct);
+
+  const weights: number[] = [];
+  for (let i = 0; i < count; i++) weights.push(factor ** i);
+  const weightSum = weights.reduce((s, w) => s + w, 0);
+
+  const out: PlannedGridOrder[] = [];
+  for (let i = 0; i < count; i++) {
+    const u = count === 1 ? 0 : i / (count - 1);
+    const ofs = first + (last - first) * u ** density;
+    const price = quantizePrice(info, refPrice * (1 + (sign * ofs) / 100));
+    const qty = quantizeQty(info, (totalQty * weights[i]) / weightSum);
+    if (qty < info.minQty || qty <= 0) continue;
+    if (info.minNotional > 0 && qty * price < info.minNotional) continue;
+    out.push({ price, qty });
+  }
+  return out;
+}
 
 export interface PlannedTpOrder {
   price: number;

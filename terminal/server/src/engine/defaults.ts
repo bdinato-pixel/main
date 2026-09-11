@@ -1,10 +1,16 @@
-import type { CloseModule, DcaModule, Hook, OpenModule, SlModule, SlxModule, TpModule } from '../store/types.js';
+import type { CloseModule, DcaModule, GridConfig, Hook, OpenModule, SlModule, SlxModule, TpModule } from '../store/types.js';
+
+export function defaultGridConfig(): GridConfig {
+  return { count: 4, firstOfsPct: 0.5, lastOfsPct: 3, qtyFactor: 1, density: 1 };
+}
 
 export function defaultOpenModule(): OpenModule {
   return {
     enabled: true,
     amount: { mode: 'volume_usd', value: 50 },
     orderType: 'market',
+    entry: 'single',
+    grid: defaultGridConfig(),
     priceOffsetPct: 0,
     leverage: 5,
     marginMode: 'cross',
@@ -24,6 +30,8 @@ export function defaultDcaModule(): DcaModule {
     enabled: false,
     amount: { mode: 'position_volume_pct', value: 100 },
     orderType: 'market',
+    entry: 'single',
+    grid: defaultGridConfig(),
     priceOffsetPct: 0,
     maxPositionVolumeUsd: 0,
     allowWithOpenDcaOrders: true,

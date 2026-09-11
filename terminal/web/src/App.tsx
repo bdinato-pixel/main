@@ -87,6 +87,7 @@ function AccountBadge() {
   return (
     <span className="dim">
       {account.label} {account.exchange === 'paper' && <span className="pill on">paper</span>}
+      {account.hedgeMode && <span className="pill"> hedge</span>}
     </span>
   );
 }
