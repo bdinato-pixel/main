@@ -26,10 +26,12 @@ export function OrderPanel() {
   const [tpOrders, setTpOrders] = useState<TpOrderSpec[]>([{ ofsPct: 1, price: 0, piecePct: 100 }]);
   const [slOn, setSlOn] = useState(false);
   const [slOfs, setSlOfs] = useState(3);
+  const [slTrig, setSlTrig] = useState('price'); // 'price' or a candle timeframe
   const [slxOn, setSlxOn] = useState(false);
   const [slxAct, setSlxAct] = useState(1);
   const [slxTrail, setSlxTrail] = useState(0.5);
   const [slxBe, setSlxBe] = useState(0);
+  const [slxTrig, setSlxTrig] = useState('price');
 
   const lastPrice = prices[symbol] ?? tickers.find((t) => t.symbol === symbol)?.last ?? 0;
   const quoteFree = balances.find((b) => b.asset === 'USDT')?.free ?? 0;
@@ -64,10 +66,25 @@ export function OrderPanel() {
           ? { enabled: true, orderType: 'limit', orders: tpOrders, reorderLevels: true, updateBySignal: false }
           : undefined,
         sl: slOn
-          ? { enabled: true, ofsPct: slOfs, price: 0, orderType: 'stop_market', reorderAfterDca: true }
+          ? {
+              enabled: true,
+              ofsPct: slOfs,
+              price: 0,
+              orderType: 'stop_market',
+              reorderAfterDca: true,
+              trigger: slTrig === 'price' ? 'price' : 'candle',
+              candleTf: slTrig === 'price' ? '1m' : slTrig,
+            }
           : undefined,
         slx: slxOn
-          ? { enabled: true, activationOfsPct: slxAct, trailPct: slxTrail, breakevenAfterTp: slxBe }
+          ? {
+              enabled: true,
+              activationOfsPct: slxAct,
+              trailPct: slxTrail,
+              breakevenAfterTp: slxBe,
+              trigger: slxTrig === 'price' ? 'price' : 'candle',
+              candleTf: slxTrig === 'price' ? '1m' : slxTrig,
+            }
           : undefined,
       });
       setError(null);
@@ -218,6 +235,18 @@ export function OrderPanel() {
           <div className="row">
             <label>Offset %</label>
             <input type="number" value={slOfs} onChange={(e) => setSlOfs(Number(e.target.value))} />
+            <select
+              title="Price touch fires instantly; a candle option fires only when that candle closes beyond the level (server must be running)"
+              value={slTrig}
+              onChange={(e) => setSlTrig(e.target.value)}
+            >
+              <option value="price">Touch</option>
+              {['1m', '3m', '5m', '15m', '1h', '4h'].map((tf) => (
+                <option key={tf} value={tf}>
+                  {tf} close
+                </option>
+              ))}
+            </select>
           </div>
         )}
       </div>
@@ -239,6 +268,17 @@ export function OrderPanel() {
             <div className="row">
               <label>BE after TP#</label>
               <input type="number" value={slxBe} onChange={(e) => setSlxBe(Number(e.target.value))} />
+            </div>
+            <div className="row">
+              <label>Trigger</label>
+              <select value={slxTrig} onChange={(e) => setSlxTrig(e.target.value)}>
+                <option value="price">Touch</option>
+                {['1m', '3m', '5m', '15m', '1h', '4h'].map((tf) => (
+                  <option key={tf} value={tf}>
+                    {tf} close
+                  </option>
+                ))}
+              </select>
             </div>
           </>
         )}

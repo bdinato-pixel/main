@@ -292,6 +292,14 @@ export class BinanceAdapter implements ExchangeAdapter {
     this.streams.onPrice(cb);
   }
 
+  watchCandles(symbol: string, interval: string): void {
+    this.streams.watchCandles(symbol, interval);
+  }
+
+  onCandleClose(cb: (symbol: string, interval: string, candle: Kline) => void): void {
+    this.streams.onCandleClose(cb);
+  }
+
   async close(): Promise<void> {
     await this.streams.close();
   }

@@ -125,9 +125,18 @@ export class TradingEngine extends EventEmitter {
         void this.handlePriceTick(a!, symbol, price);
         this.priceListeners.forEach((cb) => cb(symbol, price));
       });
-      // Watch prices for existing open positions after a restart.
+      a.onCandleClose((symbol, interval, candle) =>
+        void this.handleCandleClose(a!, symbol, interval, candle.close).catch((e) =>
+          this.log('error', `candle close handling failed: ${e}`),
+        ),
+      );
+      // Watch prices/candles for existing open positions after a restart.
       for (const p of this.db.openPositions(accountId)) {
-        if (p.market === market) a.watchPrice(p.symbol);
+        if (p.market !== market) continue;
+        a.watchPrice(p.symbol);
+        if (p.slCandleTf) a.watchCandles(p.symbol, p.slCandleTf);
+        const slx = p.config.slx;
+        if (slx.enabled && slx.trigger === 'candle') a.watchCandles(p.symbol, slx.candleTf ?? '1m');
       }
     }
     return a;
@@ -772,6 +781,10 @@ export class TradingEngine extends EventEmitter {
     if (!info) return;
     await this.replaceTpOrders(adapter, pos, info, afterDca);
     await this.replaceSlOrder(adapter, pos, info, afterDca);
+    const slx = pos.config.slx;
+    if (slx.enabled && slx.trigger === 'candle') {
+      adapter.watchCandles(pos.symbol, slx.candleTf ?? '1m');
+    }
     this.db.upsertPosition(pos);
   }
 
@@ -841,6 +854,7 @@ export class TradingEngine extends EventEmitter {
       pos.slOrderId = undefined;
     }
     pos.virtualSlPrice = undefined;
+    pos.slCandleTf = undefined;
     if (!sl.enabled) return;
     if (afterDca && !sl.reorderAfterDca && pos.slPrice) {
       // keep previous level
@@ -857,6 +871,16 @@ export class TradingEngine extends EventEmitter {
     price: number,
   ): Promise<void> {
     pos.slPrice = price;
+    if (pos.config.sl.trigger === 'candle') {
+      // Candle-close SL is server-evaluated: no exchange stop can express
+      // "confirmed on close", so it fires a market close from candle events.
+      const tf = pos.config.sl.candleTf ?? '1m';
+      pos.virtualSlPrice = price;
+      pos.slCandleTf = tf;
+      adapter.watchCandles(pos.symbol, tf);
+      return;
+    }
+    pos.slCandleTf = undefined;
     if (pos.market === 'futures') {
       const res = await adapter
         .placeOrder({
@@ -888,6 +912,7 @@ export class TradingEngine extends EventEmitter {
     pos.slOrderId = undefined;
     pos.virtualTp = undefined;
     pos.virtualSlPrice = undefined;
+    pos.slCandleTf = undefined;
     pos.entryOrderIds = undefined;
   }
 
@@ -953,8 +978,8 @@ export class TradingEngine extends EventEmitter {
         }
       }
 
-      // Virtual SL (spot).
-      if (pos.virtualSlPrice && pos.qty > 0) {
+      // Virtual SL on touch (spot). Candle-triggered SLs wait for closes.
+      if (pos.virtualSlPrice && !pos.slCandleTf && pos.qty > 0) {
         const hit = pos.side === 'long' ? price <= pos.virtualSlPrice : price >= pos.virtualSlPrice;
         if (hit) {
           pos.virtualSlPrice = undefined;
@@ -964,23 +989,65 @@ export class TradingEngine extends EventEmitter {
         }
       }
 
-      // Trailing stop.
-      const slx = pos.config.slx;
-      if (slx.enabled && pos.qty > 0) {
-        const update = updateTrailing(slx, pos.side, pos.entryPrice, pos.trailing, price);
-        const changed =
-          update.armed !== (pos.trailing?.armed ?? false) || update.stopPrice !== (pos.trailing?.stopPrice ?? 0);
-        pos.trailing = { armed: update.armed, bestPrice: update.bestPrice, stopPrice: update.stopPrice };
-        if (changed) this.db.upsertPosition(pos);
-        if (update.armed && update.triggered) {
-          pos.config.slx = { ...slx, enabled: false };
-          this.db.upsertPosition(pos);
-          this.log('info', `trailing stop triggered for ${symbol} @ ${price}`);
-          await this.closePositionMarket(adapter, pos, 1).catch((e) => this.log('error', `trailing close failed: ${e}`));
-        }
+      // Trailing stop on ticks (candle-triggered trailing advances on closes).
+      if (pos.config.slx.trigger !== 'candle') {
+        await this.advanceTrailing(adapter, pos, symbol, price);
       }
     } finally {
       this.trailingBusy.delete(busyKey);
+    }
+  }
+
+  private async advanceTrailing(
+    adapter: ExchangeAdapter,
+    pos: ManagedPosition,
+    symbol: string,
+    price: number,
+  ): Promise<void> {
+    const slx = pos.config.slx;
+    if (!slx.enabled || pos.qty <= 0) return;
+    const update = updateTrailing(slx, pos.side, pos.entryPrice, pos.trailing, price);
+    const changed =
+      update.armed !== (pos.trailing?.armed ?? false) || update.stopPrice !== (pos.trailing?.stopPrice ?? 0);
+    pos.trailing = { armed: update.armed, bestPrice: update.bestPrice, stopPrice: update.stopPrice };
+    if (changed) this.db.upsertPosition(pos);
+    if (update.armed && update.triggered) {
+      pos.config.slx = { ...slx, enabled: false };
+      this.db.upsertPosition(pos);
+      this.log('info', `trailing stop triggered for ${symbol} @ ${price}`);
+      await this.closePositionMarket(adapter, pos, 1).catch((e) => this.log('error', `trailing close failed: ${e}`));
+    }
+  }
+
+  /** Candle-close events drive candle-triggered SLs and trailing stops. */
+  private async handleCandleClose(
+    adapter: ExchangeAdapter,
+    symbol: string,
+    interval: string,
+    close: number,
+  ): Promise<void> {
+    const targets = this.db
+      .openPositions(adapter.accountId)
+      .filter((p) => p.market === adapter.market && p.symbol === symbol);
+    for (const pos of targets) {
+      if (pos.qty <= 0) continue;
+      // Candle-close SL: fires only when the trigger candle CLOSES beyond
+      // the level (long: at or below; short: at or above) — wicks don't.
+      if (pos.virtualSlPrice && pos.slCandleTf === interval) {
+        const hit = pos.side === 'long' ? close <= pos.virtualSlPrice : close >= pos.virtualSlPrice;
+        if (hit) {
+          pos.virtualSlPrice = undefined;
+          pos.slCandleTf = undefined;
+          this.db.upsertPosition(pos);
+          this.log('info', `candle-close SL triggered for ${symbol} (${interval} close ${close})`);
+          await this.closePositionMarket(adapter, pos, 1).catch((e) => this.log('error', `candle SL failed: ${e}`));
+          continue;
+        }
+      }
+      const slx = pos.config.slx;
+      if (slx.enabled && slx.trigger === 'candle' && (slx.candleTf ?? '1m') === interval) {
+        await this.advanceTrailing(adapter, pos, symbol, close);
+      }
     }
   }
 

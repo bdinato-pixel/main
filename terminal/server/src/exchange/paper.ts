@@ -22,6 +22,8 @@ export interface PriceSource {
   getKlines(symbol: string, interval: string, limit: number): Promise<Kline[]>;
   watchPrice(symbol: string): void;
   onPrice(cb: (symbol: string, price: number) => void): void;
+  watchCandles(symbol: string, interval: string): void;
+  onCandleClose(cb: (symbol: string, interval: string, candle: Kline) => void): void;
   close(): Promise<void>;
 }
 
@@ -29,12 +31,30 @@ export interface PriceSource {
 export class ManualPriceSource implements PriceSource {
   private prices = new Map<string, number>();
   private cbs: ((symbol: string, price: number) => void)[] = [];
+  private candleCbs: ((symbol: string, interval: string, candle: Kline) => void)[] = [];
 
   constructor(private symbols: SymbolInfo[]) {}
 
   setPrice(symbol: string, price: number): void {
     this.prices.set(symbol, price);
     this.cbs.forEach((cb) => cb(symbol, price));
+  }
+
+  /** Emit a closed candle (all OHLC = close unless given). */
+  closeCandle(symbol: string, interval: string, close: number, partial: Partial<Kline> = {}): void {
+    this.prices.set(symbol, close);
+    const now = Date.now();
+    const candle: Kline = {
+      openTime: now - 60_000,
+      open: close,
+      high: close,
+      low: close,
+      close,
+      volume: 0,
+      closeTime: now,
+      ...partial,
+    };
+    this.candleCbs.forEach((cb) => cb(symbol, interval, candle));
   }
 
   async getSymbols(): Promise<SymbolInfo[]> {
@@ -59,6 +79,12 @@ export class ManualPriceSource implements PriceSource {
 
   onPrice(cb: (symbol: string, price: number) => void): void {
     this.cbs.push(cb);
+  }
+
+  watchCandles(): void {}
+
+  onCandleClose(cb: (symbol: string, interval: string, candle: Kline) => void): void {
+    this.candleCbs.push(cb);
   }
 
   async close(): Promise<void> {}
@@ -228,6 +254,14 @@ export class PaperAdapter implements ExchangeAdapter {
 
   onPrice(cb: (symbol: string, price: number) => void): void {
     this.source.onPrice(cb);
+  }
+
+  watchCandles(symbol: string, interval: string): void {
+    this.source.watchCandles(symbol, interval);
+  }
+
+  onCandleClose(cb: (symbol: string, interval: string, candle: Kline) => void): void {
+    this.source.onCandleClose(cb);
   }
 
   async close(): Promise<void> {

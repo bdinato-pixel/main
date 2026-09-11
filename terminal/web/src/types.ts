@@ -66,8 +66,23 @@ export interface Hook {
     checkProfit: boolean;
     closeAll: string;
   };
-  sl: { enabled: boolean; ofsPct: number; price: number; orderType: string; reorderAfterDca: boolean };
-  slx: { enabled: boolean; activationOfsPct: number; trailPct: number; breakevenAfterTp: number };
+  sl: {
+    enabled: boolean;
+    ofsPct: number;
+    price: number;
+    orderType: string;
+    reorderAfterDca: boolean;
+    trigger?: 'price' | 'candle';
+    candleTf?: string;
+  };
+  slx: {
+    enabled: boolean;
+    activationOfsPct: number;
+    trailPct: number;
+    breakevenAfterTp: number;
+    trigger?: 'price' | 'candle';
+    candleTf?: string;
+  };
   tp: {
     enabled: boolean;
     orderType: string;

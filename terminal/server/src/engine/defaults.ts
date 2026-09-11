@@ -51,11 +51,26 @@ export function defaultCloseModule(): CloseModule {
 }
 
 export function defaultSlModule(): SlModule {
-  return { enabled: false, ofsPct: 5, price: 0, orderType: 'stop_market', reorderAfterDca: true };
+  return {
+    enabled: false,
+    ofsPct: 5,
+    price: 0,
+    orderType: 'stop_market',
+    reorderAfterDca: true,
+    trigger: 'price',
+    candleTf: '1m',
+  };
 }
 
 export function defaultSlxModule(): SlxModule {
-  return { enabled: false, activationOfsPct: 1, trailPct: 0.5, breakevenAfterTp: 0 };
+  return {
+    enabled: false,
+    activationOfsPct: 1,
+    trailPct: 0.5,
+    breakevenAfterTp: 0,
+    trigger: 'price',
+    candleTf: '1m',
+  };
 }
 
 export function defaultTpModule(): TpModule {

@@ -123,6 +123,9 @@ export interface ExchangeAdapter {
   /** Live price ticks for symbols the engine watches. */
   watchPrice(symbol: string): void;
   onPrice(cb: (symbol: string, price: number) => void): void;
+  /** Closed candles of a timeframe (for candle-close SL/trailing triggers). */
+  watchCandles(symbol: string, interval: string): void;
+  onCandleClose(cb: (symbol: string, interval: string, candle: Kline) => void): void;
 
   close(): Promise<void>;
 }

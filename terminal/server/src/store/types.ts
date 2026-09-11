@@ -110,6 +110,13 @@ export interface SlModule {
   orderType: 'stop_market' | 'stop_limit';
   /** Recompute SL from the new average price after DCA. */
   reorderAfterDca: boolean;
+  /**
+   * Trigger source (Finandy): 'price' fires on touch (exchange-resident stop
+   * on futures); 'candle' fires only when a candle of candleTf CLOSES beyond
+   * the SL level — wick-tolerant, evaluated server-side.
+   */
+  trigger?: 'price' | 'candle';
+  candleTf?: string;
 }
 
 /** Trailing stop ("SLX"). Runs virtually on the price stream. */
@@ -121,6 +128,9 @@ export interface SlxModule {
   trailPct: number;
   /** Move SL to breakeven once this many TP orders filled (0 = off). */
   breakevenAfterTp: number;
+  /** 'price' = arm/trail/trigger on every tick; 'candle' = on candle closes. */
+  trigger?: 'price' | 'candle';
+  candleTf?: string;
 }
 
 export interface TpOrderSpec {
@@ -230,8 +240,10 @@ export interface ManagedPosition {
   tpFilledCount: number;
   slOrderId?: string;
   slPrice?: number;
-  /** Virtual SL (spot) armed at this price. */
+  /** Virtual SL (spot, or candle-triggered) armed at this price. */
   virtualSlPrice?: number;
+  /** When set, the virtual SL fires on closes of this candle timeframe. */
+  slCandleTf?: string;
   trailing?: {
     armed: boolean;
     bestPrice: number;

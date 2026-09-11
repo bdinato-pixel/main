@@ -1,5 +1,5 @@
 import type { MarketType } from '../../store/types.js';
-import type { FillEvent } from '../types.js';
+import type { FillEvent, Kline } from '../types.js';
 import type { BinanceRest } from './rest.js';
 import { BINANCE_WS } from './rest.js';
 
@@ -12,8 +12,10 @@ export class BinanceStreams {
   private priceWs: WebSocket | null = null;
   private userWs: WebSocket | null = null;
   private watched = new Set<string>();
+  private watchedKlines = new Set<string>(); // "btcusdt@kline_1m" stream names
   private prices = new Map<string, number>();
   private priceCbs: ((symbol: string, price: number) => void)[] = [];
+  private candleCbs: ((symbol: string, interval: string, candle: Kline) => void)[] = [];
   private fillCbs: ((fill: FillEvent) => void)[] = [];
   private keepAlive: NodeJS.Timeout | null = null;
   private closed = false;
@@ -38,21 +40,64 @@ export class BinanceStreams {
     this.priceCbs.push(cb);
   }
 
+  watchCandles(symbol: string, interval: string): void {
+    const stream = `${symbol.toLowerCase()}@kline_${interval}`;
+    if (this.watchedKlines.has(stream)) return;
+    this.watchedKlines.add(stream);
+    this.reconnectPriceWs();
+  }
+
+  onCandleClose(cb: (symbol: string, interval: string, candle: Kline) => void): void {
+    this.candleCbs.push(cb);
+  }
+
   onFill(cb: (fill: FillEvent) => void): void {
     this.fillCbs.push(cb);
   }
 
   private reconnectPriceWs(): void {
     this.priceWs?.close();
-    if (this.watched.size === 0 || this.closed) return;
-    const streams = [...this.watched].map((s) => `${s.toLowerCase()}@miniTicker`).join('/');
+    if ((this.watched.size === 0 && this.watchedKlines.size === 0) || this.closed) return;
+    const streams = [
+      ...[...this.watched].map((s) => `${s.toLowerCase()}@miniTicker`),
+      ...this.watchedKlines,
+    ].join('/');
     const ws = new WebSocket(`${this.wsBase}/stream?streams=${streams}`);
     this.priceWs = ws;
     ws.onmessage = (ev) => {
       try {
-        const msg = JSON.parse(String(ev.data)) as { data?: { s?: string; c?: string } };
-        const s = msg.data?.s;
-        const c = Number(msg.data?.c);
+        const msg = JSON.parse(String(ev.data)) as {
+          data?: {
+            e?: string;
+            s?: string;
+            c?: string;
+            k?: { t: number; T: number; s: string; i: string; o: string; h: string; l: string; c: string; v: string; x: boolean };
+          };
+        };
+        const data = msg.data;
+        if (!data) return;
+        if (data.e === 'kline' && data.k) {
+          const k = data.k;
+          const close = Number(k.c);
+          if (close > 0) {
+            this.prices.set(k.s, close);
+            if (k.x) {
+              const candle: Kline = {
+                openTime: k.t,
+                open: Number(k.o),
+                high: Number(k.h),
+                low: Number(k.l),
+                close,
+                volume: Number(k.v),
+                closeTime: k.T,
+              };
+              this.candleCbs.forEach((cb) => cb(k.s, k.i, candle));
+            }
+          }
+          return;
+        }
+        const s = data.s;
+        const c = Number(data.c);
         if (s && c > 0) {
           this.prices.set(s, c);
           this.priceCbs.forEach((cb) => cb(s, c));

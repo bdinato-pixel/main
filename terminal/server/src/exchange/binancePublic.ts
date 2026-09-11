@@ -41,6 +41,14 @@ export class BinancePublicSource implements PriceSource {
     this.adapter.onPrice(cb);
   }
 
+  watchCandles(symbol: string, interval: string): void {
+    this.adapter.watchCandles(symbol, interval);
+  }
+
+  onCandleClose(cb: (symbol: string, interval: string, candle: Kline) => void): void {
+    this.adapter.onCandleClose(cb);
+  }
+
   close(): Promise<void> {
     return this.adapter.close();
   }

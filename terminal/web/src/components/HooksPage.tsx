@@ -5,6 +5,42 @@ import type { GridConfig, Hook, MarketType } from '../types';
 
 const DEFAULT_GRID: GridConfig = { count: 4, firstOfsPct: 0.5, lastOfsPct: 3, qtyFactor: 1, density: 1 };
 
+const CANDLE_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h'];
+
+/**
+ * Trigger selector for SL/SLX: fire on price touch, or only when a candle
+ * of the chosen timeframe closes beyond the level (wick-tolerant).
+ */
+function TriggerSelect({
+  trigger,
+  candleTf,
+  onChange,
+}: {
+  trigger?: 'price' | 'candle';
+  candleTf?: string;
+  onChange: (trigger: 'price' | 'candle', candleTf: string) => void;
+}) {
+  const value = trigger === 'candle' ? candleTf ?? '1m' : 'price';
+  return (
+    <select
+      title="Price touch fires instantly (exchange-resident stop on futures). Candle close fires only if the candle closes beyond the level — wicks don't trigger it, but it needs the server running."
+      value={value}
+      onChange={(e) => {
+        const v = e.target.value;
+        if (v === 'price') onChange('price', candleTf ?? '1m');
+        else onChange('candle', v);
+      }}
+    >
+      <option value="price">Price touch</option>
+      {CANDLE_TFS.map((tf) => (
+        <option key={tf} value={tf}>
+          {tf} candle close
+        </option>
+      ))}
+    </select>
+  );
+}
+
 function GridFields({ grid, onChange }: { grid: GridConfig; onChange: (g: GridConfig) => void }) {
   const num = (v: string) => Number(v);
   return (
@@ -429,6 +465,17 @@ function HookEditor({ hook }: { hook: Hook }) {
           <label title="Recompute SL from the new average after DCA">
             <input type="checkbox" checked={draft.sl.reorderAfterDca} onChange={(e) => patch((d) => (d.sl.reorderAfterDca = e.target.checked))} /> reorder after DCA
           </label>
+          <label>Trigger</label>
+          <TriggerSelect
+            trigger={draft.sl.trigger}
+            candleTf={draft.sl.candleTf}
+            onChange={(trigger, candleTf) =>
+              patch((d) => {
+                d.sl.trigger = trigger;
+                d.sl.candleTf = candleTf;
+              })
+            }
+          />
           <label>
             <input type="checkbox" checked={sc('sl.ofs')} onChange={() => toggleSc('sl.ofs')} /> from signal
           </label>
@@ -450,6 +497,17 @@ function HookEditor({ hook }: { hook: Hook }) {
             type="number"
             value={draft.slx.breakevenAfterTp}
             onChange={(e) => patch((d) => (d.slx.breakevenAfterTp = Number(e.target.value)))}
+          />
+          <label>Trigger</label>
+          <TriggerSelect
+            trigger={draft.slx.trigger}
+            candleTf={draft.slx.candleTf}
+            onChange={(trigger, candleTf) =>
+              patch((d) => {
+                d.slx.trigger = trigger;
+                d.slx.candleTf = candleTf;
+              })
+            }
           />
         </div>
       </div>

@@ -45,9 +45,14 @@ terminal/
   position volume/amount % (for DCA and partial closes)
 - **Take Profit grid** with per-level offsets and piece %, level reordering
   after DCA, and `"update": true` signals to move TP levels on the fly
-- **Stop Loss** (% offset or absolute), recomputed after averaging
+- **Stop Loss** (% offset or absolute), recomputed after averaging, with a
+  choice of **trigger source**: price touch (exchange-resident stop on
+  futures) or **candle close** on a chosen timeframe — the SL fires only if
+  the candle closes beyond the level, so wicks and stop-hunts through it
+  don't knock you out
 - **Trailing stop (SLX)**: arms at an activation profit %, trails the best
-  price, optional move-SL-to-breakeven after N TP fills
+  price, optional move-SL-to-breakeven after N TP fills; also supports the
+  candle-close trigger (arms/trails/fires on closes instead of ticks)
 - Entry and DCA order grids per hook (same grid engine as manual trading)
 - Hedge-mode hooks: Long-only / Short-only / Strategy hooks manage their own
   side of a dual position; a "Both" hook opens each side independently
@@ -165,7 +170,12 @@ close / reverse / trailing lifecycles.
 - Binance only (adapter interface is exchange-agnostic; Bybit/OKX would be
   new adapters), plus the built-in paper exchange
 - Spot SL is virtual (monitored server-side) since Binance spot cannot hold
-  TP and SL simultaneously; futures SL/TP are real exchange orders
+  TP and SL simultaneously; futures SL/TP are real exchange orders — except
+  **candle-close SLs**, which are always virtual because no exchange order
+  type can express "confirmed on close" (a price-touch SL keeps protecting
+  you if the server dies; a candle-close SL does not)
+- The SL "Order book" trigger source Finandy offers (best bid/ask instead
+  of last price) is not implemented
 - Trailing stops and virtual orders are evaluated server-side — the server
   must be running for them to fire (real SL/TP orders rest on the exchange)
 - Positions opened while the server was offline are shown but not managed
