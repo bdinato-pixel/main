@@ -1,0 +1,20 @@
+{
+  "name": "terminal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted crypto trading terminal for spot and USDT-M futures with Finandy-compatible TradingView webhooks",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "build": "npm run build -w server && npm run build -w web",
+    "test": "npm run test -w server",
+    "dev:server": "npm run dev -w server",
+    "dev:web": "npm run dev -w web",
+    "start": "npm run start -w server"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
