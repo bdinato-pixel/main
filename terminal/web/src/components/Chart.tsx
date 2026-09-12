@@ -32,6 +32,10 @@ export function Chart() {
       crosshair: { mode: CrosshairMode.Normal },
       timeScale: { timeVisible: true, borderColor: '#232b36' },
       rightPriceScale: { borderColor: '#232b36' },
+      // Pin a valid BCP-47 locale: some environments report an invalid
+      // system locale (e.g. "en-US@posix") that makes Intl/date formatting
+      // throw and leaves the chart blank.
+      localization: { locale: 'en-US' },
       autoSize: true,
     });
     const series = chart.addCandlestickSeries({
