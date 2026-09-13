@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   createChart,
   CrosshairMode,
@@ -37,8 +37,16 @@ export function Chart() {
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const linesRef = useRef<IPriceLine[]>([]);
   const lastBarRef = useRef<Bar | null>(null);
-  // Preview lines the user can drag: {kind, index, current price}.
-  const draggablesRef = useRef<{ kind: 'entry' | 'tp' | 'sl'; index: number; price: number }[]>([]);
+  // Lines the user can drag: preview lines (write back to the order panel) and
+  // resting exchange orders (cancel-and-replace on drop).
+  type DragItem =
+    | { kind: 'entry' | 'tp' | 'sl'; index: number; price: number }
+    | { kind: 'order'; orderId: string; price: number };
+  const draggablesRef = useRef<DragItem[]>([]);
+  // While a resting order is being dragged, show it at this price until the
+  // move is confirmed and account state refreshes.
+  const [orderDrag, setOrderDrag] = useState<{ orderId: string; price: number } | null>(null);
+  const orderDragPriceRef = useRef<number | null>(null);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -156,6 +164,7 @@ export function Chart() {
       if (!(value > 0)) return;
       linesRef.current.push(series.createPriceLine({ price: value, color, title, lineWidth: 1, lineStyle }));
     };
+    const drags: DragItem[] = [];
 
     // 1. Managed position (dashed).
     if (managed) {
@@ -167,17 +176,18 @@ export function Chart() {
     }
 
     // 2. Resting exchange orders on this pair (solid). reduce-only sells/buys
-    // are exits (TP/SL), others are entries.
+    // are exits (TP/SL), others are entries. These are draggable → move on drop.
     for (const o of orders.filter((x) => x.symbol === symbol)) {
-      const px = o.stopPrice > 0 ? o.stopPrice : o.price;
+      const moving = orderDrag?.orderId === o.orderId;
+      const px = moving ? orderDrag!.price : o.stopPrice > 0 ? o.stopPrice : o.price;
+      if (!(px > 0)) continue;
       const kind = o.type.replace('_', ' ').toLowerCase();
       const color = o.reduceOnly ? (o.side === 'SELL' ? '#26a69a' : '#ef5350') : o.side === 'BUY' ? '#26a69a' : '#ef5350';
-      mk(px, color, `${o.side.toLowerCase()} ${kind}`, LineStyle.Solid);
+      mk(px, color, `${o.side.toLowerCase()} ${kind}${moving ? ' …' : ''}`, LineStyle.Solid);
+      drags.push({ kind: 'order', orderId: o.orderId, price: px });
     }
 
     // 3. Live preview of the order being built (dotted, marked with •).
-    // Draggable lines are collected for the pointer handlers below.
-    const drags: { kind: 'entry' | 'tp' | 'sl'; index: number; price: number }[] = [];
     if (preview && preview.symbol === symbol && preview.market === market) {
       const entryColor = preview.side === 'buy' ? '#4f8cc9' : '#b06fd6';
       for (const [i, p] of preview.entries.entries()) {
@@ -194,7 +204,7 @@ export function Chart() {
       }
     }
     draggablesRef.current = drags;
-  }, [managed, orders, preview, symbol, market]);
+  }, [managed, orders, preview, symbol, market, orderDrag]);
 
   // Drag preview lines up/down to set entry / TP / SL prices directly on the
   // chart. lightweight-charts has no native draggable lines, so this hit-tests
@@ -204,7 +214,20 @@ export function Chart() {
     const el = containerRef.current;
     const series = seriesRef.current;
     if (!el || !series) return;
-    let drag: { kind: 'entry' | 'tp' | 'sl'; index: number } | null = null;
+    // Active drag: a preview line, or a resting order (with its start Y + price
+    // so a stray click doesn't reprice a real order).
+    let drag:
+      | { kind: 'entry' | 'tp' | 'sl'; index: number }
+      | { kind: 'order'; orderId: string; origPrice: number; downY: number }
+      | null = null;
+
+    const priceAt = (y: number): number | null => {
+      const raw = series.coordinateToPrice(y);
+      if (raw == null || raw <= 0) return null;
+      const st = useStore.getState();
+      const tick = st.symbols.find((s) => s.symbol === st.symbol)?.tickSize ?? 0;
+      return tick > 0 ? Number((Math.round(raw / tick) * tick).toFixed(decimalsFromTick(tick))) : raw;
+    };
 
     const hit = (y: number) => {
       let best: (typeof draggablesRef.current)[number] | null = null;
@@ -232,7 +255,8 @@ export function Chart() {
       // Blur any focused panel input so it re-syncs to the dragged value
       // (NumberInput keeps its own text while focused).
       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-      drag = { kind: h.kind, index: h.index };
+      drag = h.kind === 'order' ? { kind: 'order', orderId: h.orderId, origPrice: h.price, downY: y } : { kind: h.kind, index: h.index };
+      orderDragPriceRef.current = null;
       el.setPointerCapture(e.pointerId);
       e.preventDefault();
       e.stopPropagation();
@@ -242,12 +266,14 @@ export function Chart() {
       const rect = el.getBoundingClientRect();
       const y = e.clientY - rect.top;
       if (drag) {
-        const raw = series.coordinateToPrice(y);
-        if (raw != null && raw > 0) {
-          const st = useStore.getState();
-          const tick = st.symbols.find((s) => s.symbol === st.symbol)?.tickSize ?? 0;
-          const price = tick > 0 ? Number((Math.round(raw / tick) * tick).toFixed(decimalsFromTick(tick))) : raw;
-          st.applyPreviewDrag?.({ kind: drag.kind, index: drag.index, price });
+        const price = priceAt(y);
+        if (price != null) {
+          if (drag.kind === 'order') {
+            orderDragPriceRef.current = price;
+            setOrderDrag({ orderId: drag.orderId, price });
+          } else {
+            useStore.getState().applyPreviewDrag?.({ kind: drag.kind, index: drag.index, price });
+          }
         }
         e.preventDefault();
         e.stopPropagation();
@@ -257,14 +283,30 @@ export function Chart() {
     };
 
     const onUp = (e: PointerEvent) => {
-      if (drag) {
-        drag = null;
-        try {
-          el.releasePointerCapture(e.pointerId);
-        } catch {
-          /* ignore */
-        }
+      if (!drag) return;
+      const d = drag;
+      drag = null;
+      try {
+        el.releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
       }
+      if (d.kind !== 'order') return;
+      const rect = el.getBoundingClientRect();
+      const movedPx = Math.abs(e.clientY - rect.top - d.downY);
+      const target = orderDragPriceRef.current;
+      // Require a deliberate drag AND an actual price change before touching a
+      // real order (cancel-and-replace on the exchange).
+      if (target == null || movedPx < 6 || target === d.origPrice) {
+        setOrderDrag(null);
+        return;
+      }
+      const st = useStore.getState();
+      void api
+        .moveOrder(st.account(), st.market, st.symbol, d.orderId, target)
+        .then(() => st.loadAccountState())
+        .catch((err) => st.setError(err instanceof Error ? err.message : String(err)))
+        .finally(() => setOrderDrag(null));
     };
 
     el.addEventListener('pointerdown', onDown, true);
