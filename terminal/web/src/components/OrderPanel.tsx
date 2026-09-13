@@ -3,8 +3,10 @@ import { api } from '../api';
 import { useStore } from '../store';
 import type { GridConfig, TpOrderSpec } from '../types';
 import { DEFAULT_GRID, GridFields } from './GridFields';
+import { NumberInput } from './NumberInput';
 
 type SizeUnit = 'usd' | 'base' | 'freePct';
+const CANDLE_TFS = ['1m', '3m', '5m', '15m', '1h', '4h', '1d', '1w'];
 
 export function OrderPanel() {
   const { market, symbol, prices, tickers, balances, setError, loadAccountState } = useStore();
@@ -13,9 +15,9 @@ export function OrderPanel() {
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [type, setType] = useState<'market' | 'limit' | 'stop_market'>('market');
   const [sizeUnit, setSizeUnit] = useState<SizeUnit>('usd');
-  const [size, setSize] = useState('100');
-  const [limitPrice, setLimitPrice] = useState('');
-  const [stopPrice, setStopPrice] = useState('');
+  const [size, setSize] = useState<number>(100);
+  const [limitPrice, setLimitPrice] = useState<number | undefined>(undefined);
+  const [stopPrice, setStopPrice] = useState<number | undefined>(undefined);
   const [leverage, setLeverage] = useState(5);
   const [marginMode, setMarginMode] = useState<'cross' | 'isolated'>('cross');
   const [reduceOnly, setReduceOnly] = useState(false);
@@ -27,7 +29,7 @@ export function OrderPanel() {
   const [tpOrders, setTpOrders] = useState<TpOrderSpec[]>([{ ofsPct: 1, price: 0, piecePct: 100 }]);
   const [slOn, setSlOn] = useState(false);
   const [slOfs, setSlOfs] = useState(3);
-  const [slPrice, setSlPrice] = useState('');
+  const [slPrice, setSlPrice] = useState<number | undefined>(undefined);
   const [slTrig, setSlTrig] = useState('price'); // 'price' or a candle timeframe
   const [beTp, setBeTp] = useState(0); // move stop to breakeven after this many TPs (0 = off)
   const [slxOn, setSlxOn] = useState(false);
@@ -37,16 +39,17 @@ export function OrderPanel() {
 
   const lastPrice = prices[symbol] ?? tickers.find((t) => t.symbol === symbol)?.last ?? 0;
   const quoteFree = balances.find((b) => b.asset === 'USDT')?.free ?? 0;
+  const setTp = (i: number, patch: Partial<TpOrderSpec>) =>
+    setTpOrders((prev) => prev.map((o, j) => (j === i ? { ...o, ...patch } : o)));
 
   const qty = useMemo(() => {
-    const v = Number(size);
-    if (!Number.isFinite(v) || v <= 0) return 0;
-    const ref = Number(limitPrice) > 0 && type !== 'market' ? Number(limitPrice) : lastPrice;
+    if (!Number.isFinite(size) || size <= 0) return 0;
+    const ref = (limitPrice ?? 0) > 0 && type !== 'market' && !gridOn ? (limitPrice as number) : lastPrice;
     if (ref <= 0) return 0;
-    if (sizeUnit === 'base') return v;
-    if (sizeUnit === 'usd') return v / ref;
-    return ((quoteFree * v) / 100) * (market === 'futures' ? leverage : 1) / ref;
-  }, [size, sizeUnit, lastPrice, limitPrice, type, quoteFree, leverage, market]);
+    if (sizeUnit === 'base') return size;
+    if (sizeUnit === 'usd') return size / ref;
+    return ((quoteFree * size) / 100) * (market === 'futures' ? leverage : 1) / ref;
+  }, [size, sizeUnit, lastPrice, limitPrice, type, gridOn, quoteFree, leverage, market]);
 
   const submit = async () => {
     setBusy(true);
@@ -58,8 +61,8 @@ export function OrderPanel() {
         side,
         type,
         qty,
-        price: type === 'limit' ? Number(limitPrice) || undefined : undefined,
-        stopPrice: type === 'stop_market' ? Number(stopPrice) || undefined : undefined,
+        price: type === 'limit' && !gridOn ? limitPrice || undefined : undefined,
+        stopPrice: type === 'stop_market' && !gridOn ? stopPrice || undefined : undefined,
         reduceOnly: reduceOnly || undefined,
         leverage: market === 'futures' ? leverage : undefined,
         marginMode: market === 'futures' ? marginMode : undefined,
@@ -73,7 +76,7 @@ export function OrderPanel() {
           ? {
               enabled: slOn,
               ofsPct: slOfs,
-              price: Number(slPrice) || 0,
+              price: slPrice || 0,
               orderType: 'stop_market',
               reorderAfterDca: true,
               breakevenAfterTp: beTp,
@@ -114,22 +117,30 @@ export function OrderPanel() {
 
       <div className="row">
         <label>Type</label>
-        <select value={type} onChange={(e) => setType(e.target.value as typeof type)}>
+        <select value={gridOn ? 'limit' : type} disabled={gridOn} onChange={(e) => setType(e.target.value as typeof type)}>
           <option value="market">Market</option>
           <option value="limit">Limit</option>
           <option value="stop_market">Stop-Market</option>
         </select>
-        {type === 'limit' && (
-          <input type="number" placeholder="price" value={limitPrice} onChange={(e) => setLimitPrice(e.target.value)} />
-        )}
-        {type === 'stop_market' && (
-          <input type="number" placeholder="stop price" value={stopPrice} onChange={(e) => setStopPrice(e.target.value)} />
+        {gridOn ? (
+          <span className="dim" style={{ fontSize: 12 }}>
+            entry prices set by the grid below
+          </span>
+        ) : (
+          <>
+            {type === 'limit' && (
+              <NumberInput allowEmpty placeholder="price" value={limitPrice} onChange={setLimitPrice} />
+            )}
+            {type === 'stop_market' && (
+              <NumberInput allowEmpty placeholder="stop price" value={stopPrice} onChange={setStopPrice} />
+            )}
+          </>
         )}
       </div>
 
       <div className="row">
         <label>Size</label>
-        <input type="number" value={size} onChange={(e) => setSize(e.target.value)} />
+        <NumberInput value={size} onChange={(v) => setSize(v ?? 0)} />
         <select value={sizeUnit} onChange={(e) => setSizeUnit(e.target.value as SizeUnit)}>
           <option value="usd">USDT</option>
           <option value="base">{symbol.replace('USDT', '')}</option>
@@ -143,7 +154,7 @@ export function OrderPanel() {
       {market === 'futures' && (
         <div className="row">
           <label>Leverage</label>
-          <input type="number" min={1} max={125} value={leverage} onChange={(e) => setLeverage(Number(e.target.value))} />
+          <NumberInput integer min={1} max={125} value={leverage} onChange={(v) => setLeverage(v ?? 1)} />
           <select value={marginMode} onChange={(e) => setMarginMode(e.target.value as 'cross' | 'isolated')}>
             <option value="cross">Cross</option>
             <option value="isolated">Isolated</option>
@@ -170,38 +181,10 @@ export function OrderPanel() {
             {tpOrders.map((o, i) => (
               <div className="row" key={i}>
                 <span className="dim">TP{i + 1}</span>
-                <input
-                  type="number"
-                  value={o.ofsPct}
-                  disabled={o.price > 0}
-                  title="offset %"
-                  onChange={(e) => {
-                    const next = [...tpOrders];
-                    next[i] = { ...o, ofsPct: Number(e.target.value) };
-                    setTpOrders(next);
-                  }}
-                />
+                <NumberInput value={o.ofsPct} disabled={o.price > 0} title="offset %" onChange={(v) => setTp(i, { ofsPct: v ?? 0 })} />
                 <span className="dim">% or</span>
-                <input
-                  type="number"
-                  value={o.price || ''}
-                  placeholder="price"
-                  title="Absolute price; overrides % when set"
-                  onChange={(e) => {
-                    const next = [...tpOrders];
-                    next[i] = { ...o, price: Number(e.target.value) };
-                    setTpOrders(next);
-                  }}
-                />
-                <input
-                  type="number"
-                  value={o.piecePct}
-                  onChange={(e) => {
-                    const next = [...tpOrders];
-                    next[i] = { ...o, piecePct: Number(e.target.value) };
-                    setTpOrders(next);
-                  }}
-                />
+                <NumberInput allowEmpty placeholder="price" title="Absolute price; overrides % when set" value={o.price} onChange={(v) => setTp(i, { price: v ?? 0 })} />
+                <NumberInput value={o.piecePct} onChange={(v) => setTp(i, { piecePct: v ?? 0 })} />
                 <span className="dim">% qty</span>
                 {tpOrders.length > 1 && (
                   <button className="ghost" onClick={() => setTpOrders(tpOrders.filter((_, j) => j !== i))}>
@@ -233,22 +216,16 @@ export function OrderPanel() {
         {slOn && (
           <div className="row">
             <label>Offset %</label>
-            <input type="number" value={slOfs} disabled={Number(slPrice) > 0} onChange={(e) => setSlOfs(Number(e.target.value))} />
+            <NumberInput value={slOfs} disabled={(slPrice ?? 0) > 0} onChange={(v) => setSlOfs(v ?? 0)} />
             <span className="dim">or</span>
-            <input
-              type="number"
-              value={slPrice}
-              placeholder="price"
-              title="Absolute stop price; overrides % when set"
-              onChange={(e) => setSlPrice(e.target.value)}
-            />
+            <NumberInput allowEmpty placeholder="price" title="Absolute stop price; overrides % when set" value={slPrice} onChange={setSlPrice} />
             <select
               title="Price touch fires instantly; a candle option fires only when that candle closes beyond the level (server must be running)"
               value={slTrig}
               onChange={(e) => setSlTrig(e.target.value)}
             >
               <option value="price">Touch</option>
-              {['1m', '3m', '5m', '15m', '1h', '4h', '1d', '1w'].map((tf) => (
+              {CANDLE_TFS.map((tf) => (
                 <option key={tf} value={tf}>
                   {tf} close
                 </option>
@@ -260,7 +237,7 @@ export function OrderPanel() {
           <label title="Move the stop to break-even (entry) after this many TPs fill. Works even with SL and Trailing off (0 = off).">
             Breakeven after TP#
           </label>
-          <input type="number" min={0} value={beTp} onChange={(e) => setBeTp(Number(e.target.value))} />
+          <NumberInput integer value={beTp} onChange={(v) => setBeTp(v ?? 0)} />
           <span className="dim" style={{ fontSize: 12 }}>
             0 = off
           </span>
@@ -275,17 +252,17 @@ export function OrderPanel() {
           <>
             <div className="row">
               <label>Activate %</label>
-              <input type="number" value={slxAct} onChange={(e) => setSlxAct(Number(e.target.value))} />
+              <NumberInput value={slxAct} onChange={(v) => setSlxAct(v ?? 0)} />
             </div>
             <div className="row">
               <label>Trail %</label>
-              <input type="number" value={slxTrail} onChange={(e) => setSlxTrail(Number(e.target.value))} />
+              <NumberInput value={slxTrail} onChange={(v) => setSlxTrail(v ?? 0)} />
             </div>
             <div className="row">
               <label>Trigger</label>
               <select value={slxTrig} onChange={(e) => setSlxTrig(e.target.value)}>
                 <option value="price">Touch</option>
-                {['1m', '3m', '5m', '15m', '1h', '4h', '1d', '1w'].map((tf) => (
+                {CANDLE_TFS.map((tf) => (
                   <option key={tf} value={tf}>
                     {tf} close
                   </option>

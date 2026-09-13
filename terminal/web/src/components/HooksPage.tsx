@@ -3,6 +3,7 @@ import { api } from '../api';
 import { useStore } from '../store';
 import type { Hook, MarketType } from '../types';
 import { DEFAULT_GRID, GridFields } from './GridFields';
+import { NumberInput } from './NumberInput';
 
 const CANDLE_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'];
 
@@ -236,11 +237,7 @@ function HookEditor({ hook }: { hook: Hook }) {
               </option>
             ))}
           </select>
-          <input
-            type="number"
-            value={draft.open.amount.value}
-            onChange={(e) => patch((d) => (d.open.amount.value = Number(e.target.value)))}
-          />
+          <NumberInput value={draft.open.amount.value} onChange={(v) => patch((d) => (d.open.amount.value = v ?? 0))} />
           <label>Entry</label>
           <select
             value={draft.open.entry ?? 'single'}
@@ -265,11 +262,7 @@ function HookEditor({ hook }: { hook: Hook }) {
               {draft.open.orderType !== 'market' && (
                 <>
                   <label>Offset %</label>
-                  <input
-                    type="number"
-                    value={draft.open.priceOffsetPct}
-                    onChange={(e) => patch((d) => (d.open.priceOffsetPct = Number(e.target.value)))}
-                  />
+                  <NumberInput value={draft.open.priceOffsetPct} onChange={(v) => patch((d) => (d.open.priceOffsetPct = v ?? 0))} />
                 </>
               )}
             </>
@@ -281,13 +274,7 @@ function HookEditor({ hook }: { hook: Hook }) {
         {draft.market === 'futures' && (
           <div className="row">
             <label>Leverage</label>
-            <input
-              type="number"
-              min={1}
-              max={125}
-              value={draft.open.leverage}
-              onChange={(e) => patch((d) => (d.open.leverage = Number(e.target.value)))}
-            />
+            <NumberInput integer min={1} max={125} value={draft.open.leverage} onChange={(v) => patch((d) => (d.open.leverage = v ?? 1))} />
             <select value={draft.open.marginMode} onChange={(e) => patch((d) => (d.open.marginMode = e.target.value as 'cross' | 'isolated'))}>
               <option value="cross">Cross</option>
               <option value="isolated">Isolated</option>
@@ -303,13 +290,9 @@ function HookEditor({ hook }: { hook: Hook }) {
             <option value="short_only">Short only</option>
           </select>
           <label>Timeout, min</label>
-          <input type="number" value={draft.open.timeoutMin} onChange={(e) => patch((d) => (d.open.timeoutMin = Number(e.target.value)))} />
+          <NumberInput integer value={draft.open.timeoutMin} onChange={(v) => patch((d) => (d.open.timeoutMin = v ?? 0))} />
           <label>Max positions</label>
-          <input
-            type="number"
-            value={draft.open.maxOpenPositions}
-            onChange={(e) => patch((d) => (d.open.maxOpenPositions = Number(e.target.value)))}
-          />
+          <NumberInput integer value={draft.open.maxOpenPositions} onChange={(v) => patch((d) => (d.open.maxOpenPositions = v ?? 0))} />
         </div>
         <div className="row">
           <label>Whitelist</label>
@@ -340,13 +323,9 @@ function HookEditor({ hook }: { hook: Hook }) {
               </option>
             ))}
           </select>
-          <input type="number" value={draft.dca.amount.value} onChange={(e) => patch((d) => (d.dca.amount.value = Number(e.target.value)))} />
+          <NumberInput value={draft.dca.amount.value} onChange={(v) => patch((d) => (d.dca.amount.value = v ?? 0))} />
           <label>Max pos vol $</label>
-          <input
-            type="number"
-            value={draft.dca.maxPositionVolumeUsd}
-            onChange={(e) => patch((d) => (d.dca.maxPositionVolumeUsd = Number(e.target.value)))}
-          />
+          <NumberInput value={draft.dca.maxPositionVolumeUsd} onChange={(v) => patch((d) => (d.dca.maxPositionVolumeUsd = v ?? 0))} />
           <label>Entry</label>
           <select
             value={draft.dca.entry ?? 'single'}
@@ -412,25 +391,11 @@ function HookEditor({ hook }: { hook: Hook }) {
           <div className="row" key={i}>
             <span className="dim">TP{i + 1}</span>
             <label>offset %</label>
-            <input
-              type="number"
-              value={o.ofsPct}
-              disabled={o.price > 0}
-              onChange={(e) => patch((d) => (d.tp.orders[i].ofsPct = Number(e.target.value)))}
-            />
+            <NumberInput value={o.ofsPct} disabled={o.price > 0} onChange={(v) => patch((d) => (d.tp.orders[i].ofsPct = v ?? 0))} />
             <label title="Absolute price; overrides offset % when set (0 = use %)">or price</label>
-            <input
-              type="number"
-              value={o.price || ''}
-              placeholder="—"
-              onChange={(e) => patch((d) => (d.tp.orders[i].price = Number(e.target.value)))}
-            />
+            <NumberInput allowEmpty placeholder="—" value={o.price} onChange={(v) => patch((d) => (d.tp.orders[i].price = v ?? 0))} />
             <label>piece %</label>
-            <input
-              type="number"
-              value={o.piecePct}
-              onChange={(e) => patch((d) => (d.tp.orders[i].piecePct = Number(e.target.value)))}
-            />
+            <NumberInput value={o.piecePct} onChange={(v) => patch((d) => (d.tp.orders[i].piecePct = v ?? 0))} />
             {draft.tp.orders.length > 1 && (
               <button className="ghost" onClick={() => patch((d) => d.tp.orders.splice(i, 1))}>
                 ✕
@@ -450,19 +415,9 @@ function HookEditor({ hook }: { hook: Hook }) {
             <input type="checkbox" checked={draft.sl.enabled} onChange={(e) => patch((d) => (d.sl.enabled = e.target.checked))} /> SL
           </label>
           <label>offset %</label>
-          <input
-            type="number"
-            value={draft.sl.ofsPct}
-            disabled={draft.sl.price > 0}
-            onChange={(e) => patch((d) => (d.sl.ofsPct = Number(e.target.value)))}
-          />
+          <NumberInput value={draft.sl.ofsPct} disabled={draft.sl.price > 0} onChange={(v) => patch((d) => (d.sl.ofsPct = v ?? 0))} />
           <label title="Absolute stop price; overrides offset % when set (0 = use %)">or price</label>
-          <input
-            type="number"
-            value={draft.sl.price || ''}
-            placeholder="—"
-            onChange={(e) => patch((d) => (d.sl.price = Number(e.target.value)))}
-          />
+          <NumberInput allowEmpty placeholder="—" value={draft.sl.price} onChange={(v) => patch((d) => (d.sl.price = v ?? 0))} />
           <label title="Recompute SL from the new average after DCA">
             <input type="checkbox" checked={draft.sl.reorderAfterDca} onChange={(e) => patch((d) => (d.sl.reorderAfterDca = e.target.checked))} /> reorder after DCA
           </label>
@@ -485,25 +440,16 @@ function HookEditor({ hook }: { hook: Hook }) {
           <label title="Move the stop to break-even (entry) once this many TPs fill. Works even with SL and Trailing off (0 = off).">
             Move to breakeven after TP#
           </label>
-          <input
-            type="number"
-            min={0}
-            value={draft.sl.breakevenAfterTp}
-            onChange={(e) => patch((d) => (d.sl.breakevenAfterTp = Number(e.target.value)))}
-          />
+          <NumberInput integer value={draft.sl.breakevenAfterTp} onChange={(v) => patch((d) => (d.sl.breakevenAfterTp = v ?? 0))} />
         </div>
         <div className="row">
           <label>
             <input type="checkbox" checked={draft.slx.enabled} onChange={(e) => patch((d) => (d.slx.enabled = e.target.checked))} /> SLX
           </label>
           <label>activate %</label>
-          <input
-            type="number"
-            value={draft.slx.activationOfsPct}
-            onChange={(e) => patch((d) => (d.slx.activationOfsPct = Number(e.target.value)))}
-          />
+          <NumberInput value={draft.slx.activationOfsPct} onChange={(v) => patch((d) => (d.slx.activationOfsPct = v ?? 0))} />
           <label>trail %</label>
-          <input type="number" value={draft.slx.trailPct} onChange={(e) => patch((d) => (d.slx.trailPct = Number(e.target.value)))} />
+          <NumberInput value={draft.slx.trailPct} onChange={(v) => patch((d) => (d.slx.trailPct = v ?? 0))} />
           <label>Trigger</label>
           <TriggerSelect
             trigger={draft.slx.trigger}
