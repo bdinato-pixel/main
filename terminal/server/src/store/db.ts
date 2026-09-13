@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { AppSettings, DbShape, Hook, ManagedPosition, SignalLogEntry } from './types.js';
+import type { AppSettings, DbShape, Hook, ManagedPosition, PendingIntent, SignalLogEntry } from './types.js';
 import { defaultHookModules } from '../engine/defaults.js';
 
 const MAX_SIGNAL_LOG = 500;
@@ -27,6 +27,7 @@ function defaults(): DbShape {
     positions: [],
     signalLog: [],
     lastCloseAt: {},
+    pendingIntents: {},
   };
 }
 
@@ -66,6 +67,12 @@ export class Db {
 
   get lastCloseAt(): Record<string, number> {
     return this.data.lastCloseAt;
+  }
+
+  get pendingIntents(): Record<string, PendingIntent> {
+    // Older db files predate this field.
+    if (!this.data.pendingIntents) this.data.pendingIntents = {};
+    return this.data.pendingIntents;
   }
 
   hookById(id: string): Hook | undefined {

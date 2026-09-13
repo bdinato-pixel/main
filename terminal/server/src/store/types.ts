@@ -309,6 +309,26 @@ export interface AppSettings {
   allowedSignalIps: string[];
 }
 
+/**
+ * An order the engine has placed that is expected to open (or grow) a position
+ * once it fills. Persisted so a restart — or a missed user-data fill event —
+ * doesn't lose the TP/SL configuration that should be applied when the fill is
+ * detected (directly, or by reconciling against the exchange).
+ */
+export interface PendingIntent {
+  accountId: string;
+  market: MarketType;
+  symbol: string;
+  dir: PositionDir;
+  hookId?: string;
+  leverage: number;
+  marginMode: 'cross' | 'isolated';
+  config: ManagedPosition['config'];
+  /** Unfilled entry/grid order ids to carry onto the position. */
+  entryOrderIds?: string[];
+  createdAt: number;
+}
+
 export interface DbShape {
   settings: AppSettings;
   hooks: Hook[];
@@ -316,4 +336,6 @@ export interface DbShape {
   signalLog: SignalLogEntry[];
   /** Last known trade timestamps per account:symbol for open-timeout checks. */
   lastCloseAt: Record<string, number>;
+  /** Pending open/DCA intents keyed by intent key, awaiting their fill. */
+  pendingIntents: Record<string, PendingIntent>;
 }

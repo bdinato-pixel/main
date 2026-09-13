@@ -162,6 +162,9 @@ export function buildRouter(engine: TradingEngine): Router {
         adapter.getPositions(),
         adapter.getOpenOrders(),
       ]);
+      // Adopt any exchange position a terminal order opened but whose fill the
+      // engine missed, so its TP/SL get placed (reuses positions just fetched).
+      await engine.reconcile(accountId, market, positions).catch(() => {});
       res.json({ balances, positions, orders, managed: engine.db.openPositions(accountId) });
     } catch (e) {
       res.status(502).json({ error: e instanceof Error ? e.message : String(e) });
