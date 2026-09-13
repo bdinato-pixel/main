@@ -111,7 +111,11 @@ export class BinanceStreams {
         setTimeout(() => this.reconnectPriceWs(), 2_000);
       }
     };
-    ws.onerror = () => ws.close();
+    // Do NOT call ws.close() here. On a failed undici WebSocket, close() fires
+    // another 'error' synchronously, which recurses until the stack overflows
+    // and crashes the process. The 'close' event follows an error on its own
+    // and drives reconnection above.
+    ws.onerror = () => {};
   }
 
   async startUserStream(): Promise<void> {
@@ -123,7 +127,9 @@ export class BinanceStreams {
     ws.onclose = () => {
       if (!this.closed) setTimeout(() => void this.startUserStream().catch(() => {}), 5_000);
     };
-    ws.onerror = () => ws.close();
+    // See the price-stream note: never call close() from onerror (it recurses
+    // and crashes). The 'close' event handles reconnection.
+    ws.onerror = () => {};
     this.keepAlive?.unref?.();
     if (this.keepAlive) clearInterval(this.keepAlive);
     this.keepAlive = setInterval(() => void this.rest.keepAliveListenKey(listenKey).catch(() => {}), 30 * 60_000);

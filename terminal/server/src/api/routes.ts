@@ -188,15 +188,18 @@ export function buildRouter(engine: TradingEngine): Router {
     }
   });
 
-  // Subscribe a symbol to the live price stream (the chart calls this for the
-  // pair being viewed so its header price and last candle update in realtime).
-  r.post('/api/watch', async (req, res) => {
-    const body = z.object({ accountId: z.string(), market: marketSchema, symbol: z.string().min(1) }).safeParse(req.body);
-    if (!body.success) return res.status(400).json({ error: body.error.message });
+  // Current price for one symbol. The chart polls this for the pair it's
+  // showing, so the header/last candle stay live over REST even where the
+  // market websocket is blocked. Also subscribes the symbol to the price
+  // stream so ws ticks refine it when they do arrive.
+  r.get('/api/price', async (req, res) => {
+    const { accountId, market } = accountAndMarket(req);
+    const symbol = String(req.query.symbol ?? '');
+    if (!symbol) return res.status(400).json({ error: 'symbol required' });
     try {
-      const adapter = await engine.adapter(body.data.accountId, body.data.market);
-      adapter.watchPrice(body.data.symbol);
-      res.json({ ok: true });
+      const adapter = await engine.adapter(accountId, market);
+      adapter.watchPrice(symbol);
+      res.json({ price: await adapter.getPrice(symbol) });
     } catch (e) {
       res.status(502).json({ error: e instanceof Error ? e.message : String(e) });
     }

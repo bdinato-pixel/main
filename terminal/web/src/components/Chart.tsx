@@ -78,11 +78,9 @@ export function Chart() {
     });
   }, [info?.tickSize, symbol]);
 
-  // Load candles when symbol/interval/market changes, and subscribe the pair
-  // to the live price stream so the header/last candle track in realtime.
+  // Load candles when symbol/interval/market changes.
   useEffect(() => {
     let cancelled = false;
-    void api.watch(account, market, symbol).catch(() => {});
     const load = () =>
       api
         .klines(account, market, symbol, interval)
@@ -97,6 +95,8 @@ export function Chart() {
           }));
           seriesRef.current.setData(bars as never);
           lastBarRef.current = bars.length ? { ...bars[bars.length - 1] } : null;
+          // Seed the header from the last close so it shows immediately.
+          if (bars.length) useStore.getState().setPrice(symbol, bars[bars.length - 1].close);
         })
         .catch(() => {});
     void load().then(() => chartRef.current?.timeScale().fitContent());
@@ -106,6 +106,25 @@ export function Chart() {
       clearInterval(reload);
     };
   }, [symbol, interval, market, account]);
+
+  // Keep the header price live by polling over REST (works even where the
+  // market websocket is blocked); ws ticks still update it more often.
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () =>
+      api
+        .price(account, market, symbol)
+        .then(({ price: p }) => {
+          if (!cancelled && p > 0) useStore.getState().setPrice(symbol, p);
+        })
+        .catch(() => {});
+    void poll();
+    const t = setInterval(poll, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [symbol, market, account]);
 
   // Live tick: extend the last candle (close, and high/low envelope).
   useEffect(() => {

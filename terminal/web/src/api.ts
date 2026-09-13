@@ -62,8 +62,8 @@ export const api = {
   tickers: (account: string, market: MarketType) => req<Ticker[]>(`/api/tickers?${qs(account, market)}`),
   klines: (account: string, market: MarketType, symbol: string, interval: string) =>
     req<Kline[]>(`/api/klines?${qs(account, market, { symbol, interval, limit: 500 })}`),
-  watch: (account: string, market: MarketType, symbol: string) =>
-    req<{ ok: boolean }>('/api/watch', { method: 'POST', body: JSON.stringify({ accountId: account, market, symbol }) }),
+  price: (account: string, market: MarketType, symbol: string) =>
+    req<{ price: number }>(`/api/price?${qs(account, market, { symbol })}`),
 
   placeOrder: (order: Record<string, unknown>) =>
     req<{ ok: boolean; orderId: string }>('/api/orders', { method: 'POST', body: JSON.stringify(order) }),
