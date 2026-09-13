@@ -199,6 +199,25 @@ export interface Settings {
   allowedSignalIps: string[];
 }
 
+/** Live preview of the order being configured in the order panel. */
+export interface OrderPreview {
+  symbol: string;
+  market: MarketType;
+  side: 'buy' | 'sell';
+  entries: number[];
+  /** Whether entry lines can be dragged (single limit/stop, or per-price grid). */
+  entriesDraggable: boolean;
+  tps: number[];
+  sl?: number;
+}
+
+/** A drag of a preview line on the chart, applied back to the order panel. */
+export interface PreviewDrag {
+  kind: 'entry' | 'tp' | 'sl';
+  index: number;
+  price: number;
+}
+
 export interface Kline {
   openTime: number;
   open: number;

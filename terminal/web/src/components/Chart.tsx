@@ -29,12 +29,16 @@ export function Chart() {
   const price = useStore((s) => s.prices[symbol]);
   const info = useStore((s) => s.symbols.find((x) => x.symbol === symbol));
   const managed = useStore((s) => s.managed.find((p) => p.symbol === symbol && p.market === market));
+  const orders = useStore((s) => s.orders);
+  const preview = useStore((s) => s.preview);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const linesRef = useRef<IPriceLine[]>([]);
   const lastBarRef = useRef<Bar | null>(null);
+  // Preview lines the user can drag: {kind, index, current price}.
+  const draggablesRef = useRef<{ kind: 'entry' | 'tp' | 'sl'; index: number; price: number }[]>([]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -141,23 +145,137 @@ export function Chart() {
     series.update(updated as never);
   }, [price]);
 
-  // Overlay entry/TP/SL lines for the managed position on this pair.
+  // Overlay lines: the managed position, resting exchange orders, and a live
+  // dotted preview of the order currently being configured in the panel.
   useEffect(() => {
     const series = seriesRef.current;
     if (!series) return;
     for (const line of linesRef.current) series.removePriceLine(line);
     linesRef.current = [];
-    if (!managed) return;
-    const mk = (value: number, color: string, title: string) =>
-      linesRef.current.push(
-        series.createPriceLine({ price: value, color, title, lineWidth: 1, lineStyle: LineStyle.Dashed }),
-      );
-    mk(managed.entryPrice, '#4f8cc9', `entry ${managed.side}`);
-    const sl = managed.slPrice ?? managed.virtualSlPrice;
-    if (sl) mk(sl, '#ef5350', 'SL');
-    if (managed.trailing?.armed) mk(managed.trailing.stopPrice, '#e2b93d', 'trail');
-    for (const [i, lvl] of (managed.tpLevels ?? []).entries()) mk(lvl.price, '#26a69a', `TP${i + 1}`);
-  }, [managed]);
+    const mk = (value: number, color: string, title: string, lineStyle: LineStyle) => {
+      if (!(value > 0)) return;
+      linesRef.current.push(series.createPriceLine({ price: value, color, title, lineWidth: 1, lineStyle }));
+    };
+
+    // 1. Managed position (dashed).
+    if (managed) {
+      mk(managed.entryPrice, '#4f8cc9', `entry ${managed.side}`, LineStyle.Dashed);
+      const sl = managed.slPrice ?? managed.virtualSlPrice;
+      if (sl) mk(sl, '#ef5350', 'SL', LineStyle.Dashed);
+      if (managed.trailing?.armed) mk(managed.trailing.stopPrice, '#e2b93d', 'trail', LineStyle.Dashed);
+      for (const [i, lvl] of (managed.tpLevels ?? []).entries()) mk(lvl.price, '#26a69a', `TP${i + 1}`, LineStyle.Dashed);
+    }
+
+    // 2. Resting exchange orders on this pair (solid). reduce-only sells/buys
+    // are exits (TP/SL), others are entries.
+    for (const o of orders.filter((x) => x.symbol === symbol)) {
+      const px = o.stopPrice > 0 ? o.stopPrice : o.price;
+      const kind = o.type.replace('_', ' ').toLowerCase();
+      const color = o.reduceOnly ? (o.side === 'SELL' ? '#26a69a' : '#ef5350') : o.side === 'BUY' ? '#26a69a' : '#ef5350';
+      mk(px, color, `${o.side.toLowerCase()} ${kind}`, LineStyle.Solid);
+    }
+
+    // 3. Live preview of the order being built (dotted, marked with •).
+    // Draggable lines are collected for the pointer handlers below.
+    const drags: { kind: 'entry' | 'tp' | 'sl'; index: number; price: number }[] = [];
+    if (preview && preview.symbol === symbol && preview.market === market) {
+      const entryColor = preview.side === 'buy' ? '#4f8cc9' : '#b06fd6';
+      for (const [i, p] of preview.entries.entries()) {
+        mk(p, entryColor, 'entry •', LineStyle.Dotted);
+        if (preview.entriesDraggable) drags.push({ kind: 'entry', index: i, price: p });
+      }
+      for (const [i, p] of preview.tps.entries()) {
+        mk(p, '#26a69a', `TP${i + 1} •`, LineStyle.Dotted);
+        drags.push({ kind: 'tp', index: i, price: p });
+      }
+      if (preview.sl) {
+        mk(preview.sl, '#ef5350', 'SL •', LineStyle.Dotted);
+        drags.push({ kind: 'sl', index: 0, price: preview.sl });
+      }
+    }
+    draggablesRef.current = drags;
+  }, [managed, orders, preview, symbol, market]);
+
+  // Drag preview lines up/down to set entry / TP / SL prices directly on the
+  // chart. lightweight-charts has no native draggable lines, so this hit-tests
+  // pointer y against each line's coordinate and writes the new price back to
+  // the order panel via the store.
+  useEffect(() => {
+    const el = containerRef.current;
+    const series = seriesRef.current;
+    if (!el || !series) return;
+    let drag: { kind: 'entry' | 'tp' | 'sl'; index: number } | null = null;
+
+    const hit = (y: number) => {
+      let best: (typeof draggablesRef.current)[number] | null = null;
+      let bestDist = 7;
+      for (const d of draggablesRef.current) {
+        const cy = series.priceToCoordinate(d.price);
+        if (cy == null) continue;
+        const dist = Math.abs(cy - y);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = d;
+        }
+      }
+      return best;
+    };
+
+    const onDown = (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      const rect = el.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      if (x > rect.width - 56) return; // over the price axis
+      const h = hit(y);
+      if (!h) return;
+      // Blur any focused panel input so it re-syncs to the dragged value
+      // (NumberInput keeps its own text while focused).
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      drag = { kind: h.kind, index: h.index };
+      el.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    const onMove = (e: PointerEvent) => {
+      const rect = el.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      if (drag) {
+        const raw = series.coordinateToPrice(y);
+        if (raw != null && raw > 0) {
+          const st = useStore.getState();
+          const tick = st.symbols.find((s) => s.symbol === st.symbol)?.tickSize ?? 0;
+          const price = tick > 0 ? Number((Math.round(raw / tick) * tick).toFixed(decimalsFromTick(tick))) : raw;
+          st.applyPreviewDrag?.({ kind: drag.kind, index: drag.index, price });
+        }
+        e.preventDefault();
+        e.stopPropagation();
+      } else {
+        el.style.cursor = hit(y) ? 'ns-resize' : 'default';
+      }
+    };
+
+    const onUp = (e: PointerEvent) => {
+      if (drag) {
+        drag = null;
+        try {
+          el.releasePointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+
+    el.addEventListener('pointerdown', onDown, true);
+    el.addEventListener('pointermove', onMove, true);
+    window.addEventListener('pointerup', onUp, true);
+    return () => {
+      el.removeEventListener('pointerdown', onDown, true);
+      el.removeEventListener('pointermove', onMove, true);
+      window.removeEventListener('pointerup', onUp, true);
+    };
+  }, []);
 
   const priceDecimals = decimalsFromTick(info?.tickSize);
 

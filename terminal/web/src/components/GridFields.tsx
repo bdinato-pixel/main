@@ -13,6 +13,33 @@ export const DEFAULT_GRID: GridConfig = {
   density: 1,
 };
 
+/**
+ * The prices a grid would place orders at (mirrors the server's planGrid
+ * price math, ignoring quantities) — for the chart preview.
+ */
+export function gridPreviewPrices(grid: GridConfig, side: 'buy' | 'sell', refPrice: number): number[] {
+  const count = Math.max(2, Math.min(30, Math.round(grid.count || 2)));
+  const mode = grid.priceMode ?? 'offset';
+  if (mode === 'levels') return (grid.levels ?? []).slice(0, count).map((l) => l.price).filter((p) => p > 0);
+
+  const density = grid.density > 0 ? grid.density : 1;
+  const useAbs = mode === 'price' && (grid.firstPrice ?? 0) > 0 && (grid.lastPrice ?? 0) > 0;
+  if (!useAbs && refPrice <= 0) return [];
+  const sign = side === 'buy' ? -1 : 1;
+  const first = Math.max(0, grid.firstOfsPct);
+  const last = Math.max(first, grid.lastOfsPct);
+  const out: number[] = [];
+  for (let i = 0; i < count; i++) {
+    const u = count === 1 ? 0 : i / (count - 1);
+    const t = u ** density;
+    const price = useAbs
+      ? (grid.firstPrice as number) + ((grid.lastPrice as number) - (grid.firstPrice as number)) * t
+      : refPrice * (1 + (sign * (first + (last - first) * t)) / 100);
+    if (price > 0) out.push(price);
+  }
+  return out;
+}
+
 /** Resize the explicit-levels array to match `count`, keeping existing rows. */
 function levelsForCount(grid: GridConfig): GridLevel[] {
   const n = Math.max(2, Math.min(30, Math.round(grid.count || 2)));
