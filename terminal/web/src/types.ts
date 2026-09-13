@@ -169,6 +169,8 @@ export interface ManagedPosition {
   virtualSlPrice?: number;
   trailing?: { armed: boolean; bestPrice: number; stopPrice: number };
   tpLevels?: { price: number; qty: number }[];
+  /** Snapshot of the modules governing this position's TP/SL lifecycle. */
+  config?: Pick<Hook, 'tp' | 'sl' | 'slx'>;
 }
 
 export interface SignalLogEntry {

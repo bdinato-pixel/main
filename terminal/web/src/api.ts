@@ -71,6 +71,11 @@ export const api = {
     req(`/api/orders/${symbol}/${orderId}?${qs(account, market)}`, { method: 'DELETE' }),
   closePosition: (id: string, fraction: number) =>
     req(`/api/positions/${id}/close`, { method: 'POST', body: JSON.stringify({ fraction }) }),
+  managePosition: (data: Record<string, unknown>) =>
+    req<{ ok: boolean; detail: string }>('/api/positions/manage', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
   positionHistory: () => req<ManagedPosition[]>('/api/positions/history'),
 };
 

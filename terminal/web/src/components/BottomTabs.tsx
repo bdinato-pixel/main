@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { useStore } from '../store';
 import type { ManagedPosition } from '../types';
+import { ManagePositionDialog, type ManageTarget } from './ManagePositionDialog';
 
 type Tab = 'positions' | 'orders' | 'balances' | 'signals' | 'history';
 
@@ -28,7 +29,8 @@ export function BottomTabs() {
 const fmt = (n: number, d = 4) => n.toLocaleString(undefined, { maximumFractionDigits: d });
 
 function Positions() {
-  const { managed, positions, prices, setSymbol, setError, loadAccountState } = useStore();
+  const { managed, positions, prices, market, setSymbol, setError, loadAccountState } = useStore();
+  const [manage, setManage] = useState<ManageTarget | null>(null);
 
   const close = async (id: string, fraction: number) => {
     try {
@@ -51,6 +53,7 @@ function Positions() {
   const unmanaged = positions.filter((x) => !managed.some((p) => p.symbol === x.symbol));
 
   return (
+    <>
     <table className="grid">
       <thead>
         <tr>
@@ -86,6 +89,15 @@ function Positions() {
             </td>
             <td className="mono">{p.trailing?.armed ? `@${fmt(p.trailing.stopPrice)}` : '—'}</td>
             <td>
+              <button
+                title="Edit TP/SL on this position"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setManage({ symbol: p.symbol, side: p.side, qty: p.qty, entryPrice: p.entryPrice, existing: p });
+                }}
+              >
+                TP/SL
+              </button>{' '}
               <button onClick={(e) => { e.stopPropagation(); void close(p.id, 0.5); }}>½</button>{' '}
               <button className="sell" onClick={(e) => { e.stopPropagation(); void close(p.id, 1); }}>
                 Close
@@ -103,7 +115,26 @@ function Positions() {
             <td className="num mono">{fmt(x.entryPrice)}</td>
             <td className="num mono">{fmt(x.markPrice)}</td>
             <td className={`num mono ${x.unrealizedPnl >= 0 ? 'pos' : 'neg'}`}>{fmt(x.unrealizedPnl, 2)}</td>
-            <td colSpan={4} className="dim">not managed by terminal</td>
+            <td colSpan={3} className="dim">not managed by terminal</td>
+            <td>
+              {market === 'futures' && (
+                <button
+                  className="primary"
+                  title="Attach a TP grid / SL to this position"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setManage({
+                      symbol: x.symbol,
+                      side: x.qty > 0 ? 'long' : 'short',
+                      qty: Math.abs(x.qty),
+                      entryPrice: x.entryPrice,
+                    });
+                  }}
+                >
+                  Manage
+                </button>
+              )}
+            </td>
           </tr>
         ))}
         {rows.length === 0 && unmanaged.length === 0 && (
@@ -115,6 +146,8 @@ function Positions() {
         )}
       </tbody>
     </table>
+    {manage && <ManagePositionDialog target={manage} onClose={() => setManage(null)} />}
+    </>
   );
 }
 

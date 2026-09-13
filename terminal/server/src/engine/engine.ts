@@ -778,14 +778,39 @@ export class TradingEngine extends EventEmitter {
     }
   }
 
+  /** Build a fresh managed-position record (unsaved). */
+  private newManagedPosition(fields: {
+    accountId: string;
+    market: MarketType;
+    symbol: string;
+    side: PositionDir;
+    qty: number;
+    entryPrice: number;
+    leverage: number;
+    marginMode: 'cross' | 'isolated';
+    hookId?: string;
+    config: ManagedPosition['config'];
+    entryOrderIds?: string[];
+  }): ManagedPosition {
+    return {
+      id: randomUUID(),
+      ...fields,
+      openedAt: Date.now(),
+      status: 'open',
+      realizedPnl: 0,
+      dcaCount: 0,
+      tpOrderIds: [],
+      tpFilledCount: 0,
+    };
+  }
+
   private createPosition(
     accountId: string,
     market: MarketType,
     fill: FillEvent,
     intent: PendingIntent,
   ): ManagedPosition {
-    const pos: ManagedPosition = {
-      id: randomUUID(),
+    const pos = this.newManagedPosition({
       accountId,
       market,
       symbol: fill.symbol,
@@ -795,17 +820,102 @@ export class TradingEngine extends EventEmitter {
       leverage: intent.leverage,
       marginMode: intent.marginMode,
       hookId: intent.hookId,
-      openedAt: Date.now(),
-      status: 'open',
-      realizedPnl: 0,
-      dcaCount: 0,
-      tpOrderIds: [],
-      tpFilledCount: 0,
       config: intent.config,
       entryOrderIds: intent.entryOrderIds?.filter((id) => id !== fill.orderId),
-    };
+    });
     this.db.upsertPosition(pos);
     return pos;
+  }
+
+  /**
+   * Attach (or replace) a TP grid + SL on a position that already exists on the
+   * exchange — including one opened before the terminal, or before this fix,
+   * that shows as "not managed". Creates the managed record from the live
+   * exchange position when needed, then places the protective orders.
+   */
+  async manageExistingPosition(input: {
+    accountId: string;
+    market: MarketType;
+    symbol: string;
+    side?: PositionDir;
+    tp?: ManagedPosition['config']['tp'];
+    sl?: ManagedPosition['config']['sl'];
+    slx?: ManagedPosition['config']['slx'];
+  }): Promise<string> {
+    const adapter = await this.adapter(input.accountId, input.market);
+    const info = await adapter.symbolInfo(input.symbol);
+    if (!info) throw new Error(`Unknown symbol ${input.symbol}`);
+    if (input.market !== 'futures') throw new Error('Managing a position requires a futures market');
+    const hedge = this.isHedge(input.accountId, input.market);
+    const positions = await adapter.getPositions();
+    const matches = positions.filter(
+      (p) =>
+        p.symbol === input.symbol &&
+        Math.abs(p.qty) > 1e-12 &&
+        (input.side
+          ? hedge
+            ? p.positionSide === (input.side === 'long' ? 'LONG' : 'SHORT')
+            : (p.qty > 0) === (input.side === 'long')
+          : true),
+    );
+    if (matches.length === 0) throw new Error(`No open ${input.symbol} position to manage`);
+    if (matches.length > 1) throw new Error(`Multiple ${input.symbol} positions — specify a side`);
+    const exPos = matches[0];
+    const dir: PositionDir = hedge
+      ? exPos.positionSide === 'SHORT'
+        ? 'short'
+        : 'long'
+      : exPos.qty > 0
+        ? 'long'
+        : 'short';
+    const config: ManagedPosition['config'] = {
+      tp: input.tp ?? { ...defaultTpModule(), enabled: false },
+      sl: input.sl ?? { ...defaultSlModule(), enabled: false },
+      slx: input.slx ?? { ...defaultSlxModule(), enabled: false },
+    };
+
+    const qk = this.key(input.accountId, input.market, input.symbol);
+    const prev = this.fillQueues.get(qk) ?? Promise.resolve();
+    let detail = '';
+    const next = prev
+      .then(async () => {
+        let pos = this.db.openPositionFor(input.accountId, input.market, input.symbol, hedge ? dir : undefined);
+        if (pos) {
+          // Already managed: swap in the new protection and re-sync size.
+          pos.config = config;
+          pos.qty = Math.abs(exPos.qty);
+          pos.entryPrice = exPos.entryPrice;
+          pos.trailing = undefined;
+          this.db.upsertPosition(pos);
+          await this.applyProtection(adapter, pos);
+          detail = `updated protection for ${pos.side} ${pos.symbol}`;
+        } else {
+          pos = this.newManagedPosition({
+            accountId: input.accountId,
+            market: input.market,
+            symbol: input.symbol,
+            side: dir,
+            qty: Math.abs(exPos.qty),
+            entryPrice: exPos.entryPrice,
+            leverage: exPos.leverage || 1,
+            marginMode: exPos.marginMode,
+            config,
+          });
+          this.db.upsertPosition(pos);
+          this.dropIntent(this.intentKey(input.accountId, input.market, input.symbol, dir));
+          adapter.watchPrice(pos.symbol);
+          await this.applyProtection(adapter, pos);
+          detail = `now managing ${pos.side} ${pos.qty} ${pos.symbol}`;
+        }
+        this.changed();
+      })
+      .catch((e) => {
+        detail = `error: ${e instanceof Error ? e.message : String(e)}`;
+        throw e;
+      });
+    this.fillQueues.set(qk, next);
+    await next;
+    return detail;
   }
 
   /** Place/replace TP grid and SL for a position. */
@@ -1068,8 +1178,7 @@ export class TradingEngine extends EventEmitter {
         const openOrders = await adapter.getOpenOrders(intent.symbol).catch(() => []);
         const openIds = new Set(openOrders.map((o) => o.orderId));
         const entryOrderIds = (intent.entryOrderIds ?? []).filter((id) => openIds.has(id));
-        const pos: ManagedPosition = {
-          id: randomUUID(),
+        const pos = this.newManagedPosition({
           accountId: intent.accountId,
           market: intent.market,
           symbol: intent.symbol,
@@ -1079,15 +1188,9 @@ export class TradingEngine extends EventEmitter {
           leverage: intent.leverage,
           marginMode: intent.marginMode,
           hookId: intent.hookId,
-          openedAt: Date.now(),
-          status: 'open',
-          realizedPnl: 0,
-          dcaCount: 0,
-          tpOrderIds: [],
-          tpFilledCount: 0,
           config: intent.config,
           entryOrderIds: entryOrderIds.length ? entryOrderIds : undefined,
-        };
+        });
         this.db.upsertPosition(pos);
         this.dropIntent(key);
         this.log(
