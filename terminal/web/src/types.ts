@@ -13,8 +13,17 @@ export interface TpOrderSpec {
   piecePct: number;
 }
 
+export interface GridLevel {
+  price: number;
+  qtyPct?: number;
+}
+
 export interface GridConfig {
   count: number;
+  priceMode?: 'offset' | 'price' | 'levels';
+  firstPrice?: number;
+  lastPrice?: number;
+  levels?: GridLevel[];
   firstOfsPct: number;
   lastOfsPct: number;
   qtyFactor: number;
@@ -72,6 +81,7 @@ export interface Hook {
     price: number;
     orderType: string;
     reorderAfterDca: boolean;
+    breakevenAfterTp: number;
     trigger?: 'price' | 'candle';
     candleTf?: string;
   };
@@ -79,7 +89,6 @@ export interface Hook {
     enabled: boolean;
     activationOfsPct: number;
     trailPct: number;
-    breakevenAfterTp: number;
     trigger?: 'price' | 'candle';
     candleTf?: string;
   };

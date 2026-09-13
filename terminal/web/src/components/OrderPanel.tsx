@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { api } from '../api';
 import { useStore } from '../store';
 import type { GridConfig, TpOrderSpec } from '../types';
+import { DEFAULT_GRID, GridFields } from './GridFields';
 
 type SizeUnit = 'usd' | 'base' | 'freePct';
 
@@ -21,16 +22,17 @@ export function OrderPanel() {
   const [busy, setBusy] = useState(false);
 
   const [gridOn, setGridOn] = useState(false);
-  const [grid, setGrid] = useState<GridConfig>({ count: 4, firstOfsPct: 0.5, lastOfsPct: 3, qtyFactor: 1, density: 1 });
+  const [grid, setGrid] = useState<GridConfig>(DEFAULT_GRID);
   const [tpOn, setTpOn] = useState(false);
   const [tpOrders, setTpOrders] = useState<TpOrderSpec[]>([{ ofsPct: 1, price: 0, piecePct: 100 }]);
   const [slOn, setSlOn] = useState(false);
   const [slOfs, setSlOfs] = useState(3);
+  const [slPrice, setSlPrice] = useState('');
   const [slTrig, setSlTrig] = useState('price'); // 'price' or a candle timeframe
+  const [beTp, setBeTp] = useState(0); // move stop to breakeven after this many TPs (0 = off)
   const [slxOn, setSlxOn] = useState(false);
   const [slxAct, setSlxAct] = useState(1);
   const [slxTrail, setSlxTrail] = useState(0.5);
-  const [slxBe, setSlxBe] = useState(0);
   const [slxTrig, setSlxTrig] = useState('price');
 
   const lastPrice = prices[symbol] ?? tickers.find((t) => t.symbol === symbol)?.last ?? 0;
@@ -65,13 +67,16 @@ export function OrderPanel() {
         tp: tpOn
           ? { enabled: true, orderType: 'limit', orders: tpOrders, reorderLevels: true, updateBySignal: false }
           : undefined,
-        sl: slOn
+        // Send the SL block when the SL module is on OR breakeven-after-TP is
+        // set (breakeven works independently of an initial stop).
+        sl: slOn || beTp > 0
           ? {
-              enabled: true,
+              enabled: slOn,
               ofsPct: slOfs,
-              price: 0,
+              price: Number(slPrice) || 0,
               orderType: 'stop_market',
               reorderAfterDca: true,
+              breakevenAfterTp: beTp,
               trigger: slTrig === 'price' ? 'price' : 'candle',
               candleTf: slTrig === 'price' ? '1m' : slTrig,
             }
@@ -81,7 +86,6 @@ export function OrderPanel() {
               enabled: true,
               activationOfsPct: slxAct,
               trailPct: slxTrail,
-              breakevenAfterTp: slxBe,
               trigger: slxTrig === 'price' ? 'price' : 'candle',
               candleTf: slxTrig === 'price' ? '1m' : slxTrig,
             }
@@ -154,25 +158,7 @@ export function OrderPanel() {
         <div className="module-head" onClick={() => setGridOn(!gridOn)}>
           <input type="checkbox" checked={gridOn} readOnly /> Order grid
         </div>
-        {gridOn && (
-          <>
-            <div className="row">
-              <label>Orders</label>
-              <input type="number" min={2} max={30} value={grid.count} onChange={(e) => setGrid({ ...grid, count: Number(e.target.value) })} />
-              <label>Qty ×</label>
-              <input type="number" step={0.1} value={grid.qtyFactor} onChange={(e) => setGrid({ ...grid, qtyFactor: Number(e.target.value) })} />
-            </div>
-            <div className="row">
-              <label>First %</label>
-              <input type="number" step={0.1} value={grid.firstOfsPct} onChange={(e) => setGrid({ ...grid, firstOfsPct: Number(e.target.value) })} />
-              <label>Last %</label>
-              <input type="number" step={0.1} value={grid.lastOfsPct} onChange={(e) => setGrid({ ...grid, lastOfsPct: Number(e.target.value) })} />
-            </div>
-            <div className="row dim" style={{ fontSize: 12 }}>
-              {grid.count} limit orders spread {grid.firstOfsPct}–{grid.lastOfsPct}% {side === 'buy' ? 'below' : 'above'} price
-            </div>
-          </>
-        )}
+        {gridOn && <GridFields grid={grid} onChange={setGrid} side={side} />}
       </div>
 
       <div className="module">
@@ -187,13 +173,26 @@ export function OrderPanel() {
                 <input
                   type="number"
                   value={o.ofsPct}
+                  disabled={o.price > 0}
+                  title="offset %"
                   onChange={(e) => {
                     const next = [...tpOrders];
                     next[i] = { ...o, ofsPct: Number(e.target.value) };
                     setTpOrders(next);
                   }}
                 />
-                <span className="dim">% ·</span>
+                <span className="dim">% or</span>
+                <input
+                  type="number"
+                  value={o.price || ''}
+                  placeholder="price"
+                  title="Absolute price; overrides % when set"
+                  onChange={(e) => {
+                    const next = [...tpOrders];
+                    next[i] = { ...o, price: Number(e.target.value) };
+                    setTpOrders(next);
+                  }}
+                />
                 <input
                   type="number"
                   value={o.piecePct}
@@ -234,14 +233,22 @@ export function OrderPanel() {
         {slOn && (
           <div className="row">
             <label>Offset %</label>
-            <input type="number" value={slOfs} onChange={(e) => setSlOfs(Number(e.target.value))} />
+            <input type="number" value={slOfs} disabled={Number(slPrice) > 0} onChange={(e) => setSlOfs(Number(e.target.value))} />
+            <span className="dim">or</span>
+            <input
+              type="number"
+              value={slPrice}
+              placeholder="price"
+              title="Absolute stop price; overrides % when set"
+              onChange={(e) => setSlPrice(e.target.value)}
+            />
             <select
               title="Price touch fires instantly; a candle option fires only when that candle closes beyond the level (server must be running)"
               value={slTrig}
               onChange={(e) => setSlTrig(e.target.value)}
             >
               <option value="price">Touch</option>
-              {['1m', '3m', '5m', '15m', '1h', '4h'].map((tf) => (
+              {['1m', '3m', '5m', '15m', '1h', '4h', '1d', '1w'].map((tf) => (
                 <option key={tf} value={tf}>
                   {tf} close
                 </option>
@@ -249,6 +256,15 @@ export function OrderPanel() {
             </select>
           </div>
         )}
+        <div className="row">
+          <label title="Move the stop to break-even (entry) after this many TPs fill. Works even with SL and Trailing off (0 = off).">
+            Breakeven after TP#
+          </label>
+          <input type="number" min={0} value={beTp} onChange={(e) => setBeTp(Number(e.target.value))} />
+          <span className="dim" style={{ fontSize: 12 }}>
+            0 = off
+          </span>
+        </div>
       </div>
 
       <div className="module">
@@ -266,14 +282,10 @@ export function OrderPanel() {
               <input type="number" value={slxTrail} onChange={(e) => setSlxTrail(Number(e.target.value))} />
             </div>
             <div className="row">
-              <label>BE after TP#</label>
-              <input type="number" value={slxBe} onChange={(e) => setSlxBe(Number(e.target.value))} />
-            </div>
-            <div className="row">
               <label>Trigger</label>
               <select value={slxTrig} onChange={(e) => setSlxTrig(e.target.value)}>
                 <option value="price">Touch</option>
-                {['1m', '3m', '5m', '15m', '1h', '4h'].map((tf) => (
+                {['1m', '3m', '5m', '15m', '1h', '4h', '1d', '1w'].map((tf) => (
                   <option key={tf} value={tf}>
                     {tf} close
                   </option>

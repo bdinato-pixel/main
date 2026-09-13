@@ -30,9 +30,30 @@ export type EntryOrderType = 'market' | 'limit' | 'stop_market';
  * orders between `firstOfsPct` and `lastOfsPct` from the reference price
  * (below it for longs, above for shorts).
  */
+/** One explicit grid order (priceMode 'levels'). */
+export interface GridLevel {
+  /** Absolute price of this order. */
+  price: number;
+  /** Optional share of the total quantity (%); blank levels split evenly. */
+  qtyPct?: number;
+}
+
 export interface GridConfig {
   /** Number of orders, 2..30. */
   count: number;
+  /**
+   * How the grid orders are placed:
+   * - 'offset': spread over first/lastOfsPct as % from the reference price;
+   * - 'price':  spread over the absolute first/lastPrice range;
+   * - 'levels': one explicit price per order from `levels` (no interpolation).
+   */
+  priceMode?: 'offset' | 'price' | 'levels';
+  /** Absolute price of the order nearest the reference (priceMode 'price'). */
+  firstPrice?: number;
+  /** Absolute price of the farthest order (priceMode 'price'). */
+  lastPrice?: number;
+  /** Explicit per-order prices/quantities (priceMode 'levels'). */
+  levels?: GridLevel[];
   /** Offset % of the order nearest to the reference price. */
   firstOfsPct: number;
   /** Offset % of the farthest order. */
@@ -111,6 +132,13 @@ export interface SlModule {
   /** Recompute SL from the new average price after DCA. */
   reorderAfterDca: boolean;
   /**
+   * Move the stop to the position's break-even (average entry) price once
+   * this many TP orders have filled (0 = off). Independent of the trailing
+   * module — it works whether or not SLX is enabled, and places a stop at
+   * breakeven even if no initial SL was set.
+   */
+  breakevenAfterTp: number;
+  /**
    * Trigger source (Finandy): 'price' fires on touch (exchange-resident stop
    * on futures); 'candle' fires only when a candle of candleTf CLOSES beyond
    * the SL level — wick-tolerant, evaluated server-side.
@@ -126,8 +154,6 @@ export interface SlxModule {
   activationOfsPct: number;
   /** Distance % the stop trails behind the best price seen. */
   trailPct: number;
-  /** Move SL to breakeven once this many TP orders filled (0 = off). */
-  breakevenAfterTp: number;
   /** 'price' = arm/trail/trigger on every tick; 'candle' = on candle closes. */
   trigger?: 'price' | 'candle';
   candleTf?: string;

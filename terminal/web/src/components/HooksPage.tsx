@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { useStore } from '../store';
-import type { GridConfig, Hook, MarketType } from '../types';
+import type { Hook, MarketType } from '../types';
+import { DEFAULT_GRID, GridFields } from './GridFields';
 
-const DEFAULT_GRID: GridConfig = { count: 4, firstOfsPct: 0.5, lastOfsPct: 3, qtyFactor: 1, density: 1 };
-
-const CANDLE_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h'];
+const CANDLE_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'];
 
 /**
  * Trigger selector for SL/SLX: fire on price touch, or only when a candle
@@ -38,24 +37,6 @@ function TriggerSelect({
         </option>
       ))}
     </select>
-  );
-}
-
-function GridFields({ grid, onChange }: { grid: GridConfig; onChange: (g: GridConfig) => void }) {
-  const num = (v: string) => Number(v);
-  return (
-    <div className="row">
-      <label>Orders</label>
-      <input type="number" min={2} max={30} value={grid.count} onChange={(e) => onChange({ ...grid, count: num(e.target.value) })} />
-      <label>First %</label>
-      <input type="number" value={grid.firstOfsPct} onChange={(e) => onChange({ ...grid, firstOfsPct: num(e.target.value) })} />
-      <label>Last %</label>
-      <input type="number" value={grid.lastOfsPct} onChange={(e) => onChange({ ...grid, lastOfsPct: num(e.target.value) })} />
-      <label title="Each next order's quantity is multiplied by this (1 = even)">Qty ×</label>
-      <input type="number" step={0.1} value={grid.qtyFactor} onChange={(e) => onChange({ ...grid, qtyFactor: num(e.target.value) })} />
-      <label title="1 = even spacing, >1 clusters orders toward the far edge, <1 toward the near edge">Density</label>
-      <input type="number" step={0.1} value={grid.density} onChange={(e) => onChange({ ...grid, density: num(e.target.value) })} />
-    </div>
   );
 }
 
@@ -434,7 +415,15 @@ function HookEditor({ hook }: { hook: Hook }) {
             <input
               type="number"
               value={o.ofsPct}
+              disabled={o.price > 0}
               onChange={(e) => patch((d) => (d.tp.orders[i].ofsPct = Number(e.target.value)))}
+            />
+            <label title="Absolute price; overrides offset % when set (0 = use %)">or price</label>
+            <input
+              type="number"
+              value={o.price || ''}
+              placeholder="—"
+              onChange={(e) => patch((d) => (d.tp.orders[i].price = Number(e.target.value)))}
             />
             <label>piece %</label>
             <input
@@ -461,7 +450,19 @@ function HookEditor({ hook }: { hook: Hook }) {
             <input type="checkbox" checked={draft.sl.enabled} onChange={(e) => patch((d) => (d.sl.enabled = e.target.checked))} /> SL
           </label>
           <label>offset %</label>
-          <input type="number" value={draft.sl.ofsPct} onChange={(e) => patch((d) => (d.sl.ofsPct = Number(e.target.value)))} />
+          <input
+            type="number"
+            value={draft.sl.ofsPct}
+            disabled={draft.sl.price > 0}
+            onChange={(e) => patch((d) => (d.sl.ofsPct = Number(e.target.value)))}
+          />
+          <label title="Absolute stop price; overrides offset % when set (0 = use %)">or price</label>
+          <input
+            type="number"
+            value={draft.sl.price || ''}
+            placeholder="—"
+            onChange={(e) => patch((d) => (d.sl.price = Number(e.target.value)))}
+          />
           <label title="Recompute SL from the new average after DCA">
             <input type="checkbox" checked={draft.sl.reorderAfterDca} onChange={(e) => patch((d) => (d.sl.reorderAfterDca = e.target.checked))} /> reorder after DCA
           </label>
@@ -481,6 +482,17 @@ function HookEditor({ hook }: { hook: Hook }) {
           </label>
         </div>
         <div className="row">
+          <label title="Move the stop to break-even (entry) once this many TPs fill. Works even with SL and Trailing off (0 = off).">
+            Move to breakeven after TP#
+          </label>
+          <input
+            type="number"
+            min={0}
+            value={draft.sl.breakevenAfterTp}
+            onChange={(e) => patch((d) => (d.sl.breakevenAfterTp = Number(e.target.value)))}
+          />
+        </div>
+        <div className="row">
           <label>
             <input type="checkbox" checked={draft.slx.enabled} onChange={(e) => patch((d) => (d.slx.enabled = e.target.checked))} /> SLX
           </label>
@@ -492,12 +504,6 @@ function HookEditor({ hook }: { hook: Hook }) {
           />
           <label>trail %</label>
           <input type="number" value={draft.slx.trailPct} onChange={(e) => patch((d) => (d.slx.trailPct = Number(e.target.value)))} />
-          <label>BE after TP#</label>
-          <input
-            type="number"
-            value={draft.slx.breakevenAfterTp}
-            onChange={(e) => patch((d) => (d.slx.breakevenAfterTp = Number(e.target.value)))}
-          />
           <label>Trigger</label>
           <TriggerSelect
             trigger={draft.slx.trigger}

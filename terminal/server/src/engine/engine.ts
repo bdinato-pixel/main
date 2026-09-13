@@ -917,17 +917,23 @@ export class TradingEngine extends EventEmitter {
   }
 
   private async maybeMoveBreakeven(adapter: ExchangeAdapter, pos: ManagedPosition): Promise<void> {
-    const slx = pos.config.slx;
-    if (!slx.enabled || slx.breakevenAfterTp <= 0) return;
-    if (pos.tpFilledCount < slx.breakevenAfterTp) return;
+    // Breakeven-after-TP is a stop-loss behaviour: it works regardless of
+    // whether the trailing (SLX) module is enabled.
+    const after = pos.config.sl.breakevenAfterTp;
+    if (after <= 0 || pos.tpFilledCount < after) return;
     const info = await adapter.symbolInfo(pos.symbol);
     if (!info) return;
+    // Already at (or better than) breakeven — nothing to do.
+    if (pos.slPrice !== undefined) {
+      const atBe = pos.side === 'long' ? pos.slPrice >= pos.entryPrice : pos.slPrice <= pos.entryPrice;
+      if (atBe) return;
+    }
     if (pos.slOrderId) {
       await adapter.cancelOrder(pos.symbol, pos.slOrderId).catch(() => {});
       pos.slOrderId = undefined;
     }
     await this.placeSlAt(adapter, pos, info, pos.entryPrice);
-    this.log('info', `SL moved to breakeven for ${pos.symbol}`);
+    this.log('info', `SL moved to breakeven for ${pos.symbol} after ${pos.tpFilledCount} TP fill(s)`);
   }
 
   // ------------------------------------------------------------------

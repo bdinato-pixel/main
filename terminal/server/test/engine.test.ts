@@ -9,7 +9,7 @@ import { ManualPriceSource, PaperAdapter } from '../src/exchange/paper.js';
 import { defaultHookModules } from '../src/engine/defaults.js';
 import type { SymbolInfo } from '../src/exchange/types.js';
 
-const SYMBOLS: SymbolInfo[] = ['TESTUSDT', 'REVUSDT', 'TRLUSDT', 'FLTUSDT'].map((symbol) => ({
+const SYMBOLS: SymbolInfo[] = ['TESTUSDT', 'REVUSDT', 'TRLUSDT', 'FLTUSDT', 'BEUSDT'].map((symbol) => ({
   symbol,
   base: symbol.replace('USDT', ''),
   quote: 'USDT',
@@ -112,6 +112,52 @@ test('signal lifecycle: open → TP/SL placement → DCA reorder → partial TP 
   assert.ok((closed?.realizedPnl ?? 0) > 0, 'profitable round trip');
   // Remaining protective orders cancelled.
   assert.equal((await adapter.getOpenOrders('TESTUSDT')).length, 0);
+
+  await engine.shutdown();
+});
+
+test('breakeven-after-TP moves the stop to entry with trailing disabled', async () => {
+  const { db, source, adapter, engine } = makeEnv();
+  source.setPrice('BEUSDT', 100);
+
+  const mods = defaultHookModules();
+  const hook = db.createHook({
+    name: 'BE',
+    accountId: 'paper',
+    market: 'futures',
+    open: { ...mods.open, amount: { mode: 'volume_usd', value: 100 } },
+    tp: {
+      ...mods.tp,
+      enabled: true,
+      orders: [
+        { ofsPct: 1, price: 0, piecePct: 50 },
+        { ofsPct: 2, price: 0, piecePct: 50 },
+      ],
+    },
+    // No initial SL and trailing OFF — only breakeven-after-first-TP is set.
+    sl: { ...mods.sl, enabled: false, breakevenAfterTp: 1 },
+    slx: { ...mods.slx, enabled: false },
+  });
+
+  await engine.handleSignal(hook.id, { name: hook.name, secret: hook.secret, symbol: 'BEUSDT', side: 'buy' }, '1.1.1.1');
+  await engine.settle();
+  let pos = db.openPositionFor('paper', 'futures', 'BEUSDT');
+  assert.ok(pos, 'position opened');
+  assert.equal(pos.tpOrderIds.length, 2, 'two TP orders placed');
+  assert.equal(pos.slOrderId, undefined, 'no stop before the first TP fills');
+
+  // Price reaches TP1 (+1%) → first TP fills → stop should appear at entry.
+  source.setPrice('BEUSDT', 101.01);
+  await tick();
+  await engine.settle();
+  pos = db.openPositionFor('paper', 'futures', 'BEUSDT');
+  assert.ok(pos, 'position still open after partial TP');
+  assert.equal(pos.tpFilledCount, 1);
+  assert.ok(pos.slOrderId, 'breakeven stop placed after TP1');
+  assert.ok(Math.abs((pos.slPrice ?? 0) - 100) < 1e-9, `stop at entry 100, got ${pos.slPrice}`);
+  const stops = (await adapter.getOpenOrders('BEUSDT')).filter((o) => o.type === 'STOP_MARKET');
+  assert.equal(stops.length, 1);
+  assert.ok(Math.abs(stops[0].stopPrice - 100) < 1e-9);
 
   await engine.shutdown();
 });

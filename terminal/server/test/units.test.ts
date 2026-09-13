@@ -119,6 +119,21 @@ test('plans a TP grid with offsets and even piece distribution', () => {
   assert.deepEqual(planShort.map((o) => o.price), [99, 98, 97]);
 });
 
+test('TP absolute price overrides the offset % on a level', () => {
+  const tp = {
+    enabled: true,
+    orderType: 'limit' as const,
+    orders: [
+      { ofsPct: 1, price: 105, piecePct: 50 }, // absolute wins
+      { ofsPct: 2, price: 0, piecePct: 50 }, // % used
+    ],
+    reorderLevels: true,
+    updateBySignal: false,
+  };
+  const plan = planTpOrders(tp, 'long', 100, 10, INFO);
+  assert.deepEqual(plan.map((o) => o.price), [105, 102]);
+});
+
 test('TP last level absorbs rounding remainder; sum equals position', () => {
   const tp = {
     enabled: true,
@@ -148,7 +163,7 @@ test('SL price from % offset and from absolute price', () => {
 // -------------------------------------------------------------- trailing
 
 test('trailing stop arms, trails and triggers', () => {
-  const slx = { enabled: true, activationOfsPct: 1, trailPct: 0.5, breakevenAfterTp: 0 };
+  const slx = { enabled: true, activationOfsPct: 1, trailPct: 0.5 };
   // Not armed below activation.
   let s = updateTrailing(slx, 'long', 100, undefined, 100.5);
   assert.equal(s.armed, false);

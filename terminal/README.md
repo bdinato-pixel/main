@@ -22,9 +22,17 @@ terminal/
 - Candlestick chart (lightweight-charts) with entry / TP / SL / trailing lines
 - Market, limit and stop-market orders; size in USDT, tokens, or % of free
   balance (× leverage on futures)
-- **Order grids**: spread an amount over 2–30 limit orders across a % range,
-  with a per-order quantity multiplier and a density curve for spacing;
-  unfilled levels are cancelled automatically when the position closes
+- **Order grids**: spread an amount over 2–30 limit orders, placing them by
+  **% offset range**, **absolute first/last price range**, or **each price**
+  (type an exact price per order, with an optional per-order quantity split);
+  range modes also take a per-order quantity multiplier and a density curve
+  for spacing. Unfilled levels are cancelled automatically when the position
+  closes
+- **Absolute price limits everywhere**: TP levels and the Stop Loss take
+  either a % offset or an exact price (the price overrides the % when set),
+  in both the order panel and the hook editor
+- **Resizable layout**: drag the dividers between the ticker list, chart,
+  order panel and the bottom tables; the sizes are remembered per browser
 - Leverage and cross/isolated margin control per order
 - **Hedge mode** (futures dual-side): hold a long and a short on the same
   pair simultaneously, each with its own TP/SL/trailing lifecycle —
@@ -50,9 +58,14 @@ terminal/
   futures) or **candle close** on a chosen timeframe — the SL fires only if
   the candle closes beyond the level, so wicks and stop-hunts through it
   don't knock you out
+- **Move stop to breakeven after N TPs**: once the chosen number of TP orders
+  fill, the stop is moved to the position's average entry price. It's a
+  stop-loss setting, independent of the trailing module — it works with SL
+  and trailing both off, and will place a stop at breakeven even if no
+  initial SL was set
 - **Trailing stop (SLX)**: arms at an activation profit %, trails the best
-  price, optional move-SL-to-breakeven after N TP fills; also supports the
-  candle-close trigger (arms/trails/fires on closes instead of ticks)
+  price; also supports the candle-close trigger (arms/trails/fires on closes
+  instead of ticks)
 - Entry and DCA order grids per hook (same grid engine as manual trading)
 - Hedge-mode hooks: Long-only / Short-only / Strategy hooks manage their own
   side of a dual position; a "Both" hook opens each side independently

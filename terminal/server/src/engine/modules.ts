@@ -1,4 +1,4 @@
-import type { GridConfig, PositionDir, SlModule, SlxModule, TpModule } from '../store/types.js';
+import type { GridConfig, GridLevel, PositionDir, SlModule, SlxModule, TpModule } from '../store/types.js';
 import type { SymbolInfo } from '../exchange/types.js';
 import { quantizePrice, quantizeQty } from './quantizer.js';
 
@@ -9,12 +9,13 @@ export interface PlannedGridOrder {
 
 /**
  * Plan a grid of limit orders (Finandy "Order grid"): `totalQty` base units
- * spread over `grid.count` orders between firstOfsPct and lastOfsPct from
- * the reference price — below it for longs, above for shorts. Quantities
- * follow qtyFactor (1 = even, 2 = each next order doubles); spacing follows
- * the density curve (1 = even, >1 clusters toward the far edge, <1 toward
- * the near edge). Orders that fall below exchange minimums are dropped,
- * mirroring how exchanges reject them.
+ * spread over `grid.count` orders. Bounds come either from firstOfsPct /
+ * lastOfsPct as % from the reference price (below it for longs, above for
+ * shorts) or, when priceMode is 'price', from the absolute firstPrice /
+ * lastPrice. Quantities follow qtyFactor (1 = even, 2 = each next order
+ * doubles); spacing follows the density curve (1 = even, >1 clusters toward
+ * the far edge, <1 toward the near edge). Orders that fall below exchange
+ * minimums are dropped, mirroring how exchanges reject them.
  */
 export function planGrid(
   grid: GridConfig,
@@ -24,12 +25,22 @@ export function planGrid(
   info: SymbolInfo,
 ): PlannedGridOrder[] {
   const count = Math.max(2, Math.min(30, Math.round(grid.count)));
-  if (totalQty <= 0 || refPrice <= 0) return [];
-  const sign = dir === 'long' ? -1 : 1;
+  if (totalQty <= 0) return [];
   const density = grid.density > 0 ? grid.density : 1;
   const factor = grid.qtyFactor > 0 ? grid.qtyFactor : 1;
+
+  // Explicit per-order prices: one order per level, no interpolation.
+  if (grid.priceMode === 'levels') return planGridLevels(grid.levels ?? [], totalQty, info);
+
+  const useAbsolute =
+    grid.priceMode === 'price' && (grid.firstPrice ?? 0) > 0 && (grid.lastPrice ?? 0) > 0;
+  if (!useAbsolute && refPrice <= 0) return [];
+
+  const sign = dir === 'long' ? -1 : 1;
   const first = Math.max(0, grid.firstOfsPct);
   const last = Math.max(first, grid.lastOfsPct);
+  const firstP = grid.firstPrice ?? 0;
+  const lastP = grid.lastPrice ?? 0;
 
   const weights: number[] = [];
   for (let i = 0; i < count; i++) weights.push(factor ** i);
@@ -38,10 +49,38 @@ export function planGrid(
   const out: PlannedGridOrder[] = [];
   for (let i = 0; i < count; i++) {
     const u = count === 1 ? 0 : i / (count - 1);
-    const ofs = first + (last - first) * u ** density;
-    const price = quantizePrice(info, refPrice * (1 + (sign * ofs) / 100));
+    const t = u ** density;
+    const rawPrice = useAbsolute
+      ? firstP + (lastP - firstP) * t
+      : refPrice * (1 + (sign * (first + (last - first) * t)) / 100);
+    const price = quantizePrice(info, rawPrice);
     const qty = quantizeQty(info, (totalQty * weights[i]) / weightSum);
-    if (qty < info.minQty || qty <= 0) continue;
+    if (price <= 0 || qty < info.minQty || qty <= 0) continue;
+    if (info.minNotional > 0 && qty * price < info.minNotional) continue;
+    out.push({ price, qty });
+  }
+  return out;
+}
+
+/**
+ * Plan a grid from explicit per-order prices. Each level with a positive
+ * price becomes one order. Quantities follow each level's qtyPct; levels
+ * that leave it blank split the remaining share evenly (mirroring the TP
+ * piece-distribution rule). Sub-minimum orders are dropped.
+ */
+function planGridLevels(levels: GridLevel[], totalQty: number, info: SymbolInfo): PlannedGridOrder[] {
+  const valid = levels.filter((l) => (l.price ?? 0) > 0).slice(0, 30);
+  if (valid.length === 0) return [];
+  const assignedPct = valid.reduce((s, l) => s + Math.max(0, l.qtyPct ?? 0), 0);
+  const blanks = valid.filter((l) => !(l.qtyPct && l.qtyPct > 0));
+  const evenShare = blanks.length > 0 ? Math.max(0, 100 - assignedPct) / blanks.length : 0;
+
+  const out: PlannedGridOrder[] = [];
+  for (const l of valid) {
+    const pct = l.qtyPct && l.qtyPct > 0 ? l.qtyPct : evenShare;
+    const price = quantizePrice(info, l.price);
+    const qty = quantizeQty(info, (totalQty * pct) / 100);
+    if (price <= 0 || qty < info.minQty || qty <= 0) continue;
     if (info.minNotional > 0 && qty * price < info.minNotional) continue;
     out.push({ price, qty });
   }
