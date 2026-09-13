@@ -248,7 +248,7 @@ export function OrderPanel() {
               onChange={(e) => setSlTrig(e.target.value)}
             >
               <option value="price">Touch</option>
-              {['1m', '3m', '5m', '15m', '1h', '4h'].map((tf) => (
+              {['1m', '3m', '5m', '15m', '1h', '4h', '1d', '1w'].map((tf) => (
                 <option key={tf} value={tf}>
                   {tf} close
                 </option>
@@ -285,7 +285,7 @@ export function OrderPanel() {
               <label>Trigger</label>
               <select value={slxTrig} onChange={(e) => setSlxTrig(e.target.value)}>
                 <option value="price">Touch</option>
-                {['1m', '3m', '5m', '15m', '1h', '4h'].map((tf) => (
+                {['1m', '3m', '5m', '15m', '1h', '4h', '1d', '1w'].map((tf) => (
                   <option key={tf} value={tf}>
                     {tf} close
                   </option>

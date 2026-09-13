@@ -4,7 +4,7 @@ import { useStore } from '../store';
 import type { Hook, MarketType } from '../types';
 import { DEFAULT_GRID, GridFields } from './GridFields';
 
-const CANDLE_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h'];
+const CANDLE_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'];
 
 /**
  * Trigger selector for SL/SLX: fire on price touch, or only when a candle
