@@ -21,11 +21,21 @@ export function OrderPanel() {
   const [busy, setBusy] = useState(false);
 
   const [gridOn, setGridOn] = useState(false);
-  const [grid, setGrid] = useState<GridConfig>({ count: 4, firstOfsPct: 0.5, lastOfsPct: 3, qtyFactor: 1, density: 1 });
+  const [grid, setGrid] = useState<GridConfig>({
+    count: 4,
+    priceMode: 'offset',
+    firstPrice: 0,
+    lastPrice: 0,
+    firstOfsPct: 0.5,
+    lastOfsPct: 3,
+    qtyFactor: 1,
+    density: 1,
+  });
   const [tpOn, setTpOn] = useState(false);
   const [tpOrders, setTpOrders] = useState<TpOrderSpec[]>([{ ofsPct: 1, price: 0, piecePct: 100 }]);
   const [slOn, setSlOn] = useState(false);
   const [slOfs, setSlOfs] = useState(3);
+  const [slPrice, setSlPrice] = useState('');
   const [slTrig, setSlTrig] = useState('price'); // 'price' or a candle timeframe
   const [slxOn, setSlxOn] = useState(false);
   const [slxAct, setSlxAct] = useState(1);
@@ -69,7 +79,7 @@ export function OrderPanel() {
           ? {
               enabled: true,
               ofsPct: slOfs,
-              price: 0,
+              price: Number(slPrice) || 0,
               orderType: 'stop_market',
               reorderAfterDca: true,
               trigger: slTrig === 'price' ? 'price' : 'candle',
@@ -161,16 +171,37 @@ export function OrderPanel() {
               <input type="number" min={2} max={30} value={grid.count} onChange={(e) => setGrid({ ...grid, count: Number(e.target.value) })} />
               <label>Qty ×</label>
               <input type="number" step={0.1} value={grid.qtyFactor} onChange={(e) => setGrid({ ...grid, qtyFactor: Number(e.target.value) })} />
+              <label>Bounds</label>
+              <select value={grid.priceMode ?? 'offset'} onChange={(e) => setGrid({ ...grid, priceMode: e.target.value as 'offset' | 'price' })}>
+                <option value="offset">Offset %</option>
+                <option value="price">Price</option>
+              </select>
             </div>
-            <div className="row">
-              <label>First %</label>
-              <input type="number" step={0.1} value={grid.firstOfsPct} onChange={(e) => setGrid({ ...grid, firstOfsPct: Number(e.target.value) })} />
-              <label>Last %</label>
-              <input type="number" step={0.1} value={grid.lastOfsPct} onChange={(e) => setGrid({ ...grid, lastOfsPct: Number(e.target.value) })} />
-            </div>
-            <div className="row dim" style={{ fontSize: 12 }}>
-              {grid.count} limit orders spread {grid.firstOfsPct}–{grid.lastOfsPct}% {side === 'buy' ? 'below' : 'above'} price
-            </div>
+            {(grid.priceMode ?? 'offset') === 'offset' ? (
+              <>
+                <div className="row">
+                  <label>First %</label>
+                  <input type="number" step={0.1} value={grid.firstOfsPct} onChange={(e) => setGrid({ ...grid, firstOfsPct: Number(e.target.value) })} />
+                  <label>Last %</label>
+                  <input type="number" step={0.1} value={grid.lastOfsPct} onChange={(e) => setGrid({ ...grid, lastOfsPct: Number(e.target.value) })} />
+                </div>
+                <div className="row dim" style={{ fontSize: 12 }}>
+                  {grid.count} limit orders spread {grid.firstOfsPct}–{grid.lastOfsPct}% {side === 'buy' ? 'below' : 'above'} price
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="row">
+                  <label>First price</label>
+                  <input type="number" value={grid.firstPrice || ''} onChange={(e) => setGrid({ ...grid, firstPrice: Number(e.target.value) })} />
+                  <label>Last price</label>
+                  <input type="number" value={grid.lastPrice || ''} onChange={(e) => setGrid({ ...grid, lastPrice: Number(e.target.value) })} />
+                </div>
+                <div className="row dim" style={{ fontSize: 12 }}>
+                  {grid.count} limit orders from {grid.firstPrice || '—'} to {grid.lastPrice || '—'}
+                </div>
+              </>
+            )}
           </>
         )}
       </div>
@@ -187,13 +218,26 @@ export function OrderPanel() {
                 <input
                   type="number"
                   value={o.ofsPct}
+                  disabled={o.price > 0}
+                  title="offset %"
                   onChange={(e) => {
                     const next = [...tpOrders];
                     next[i] = { ...o, ofsPct: Number(e.target.value) };
                     setTpOrders(next);
                   }}
                 />
-                <span className="dim">% ·</span>
+                <span className="dim">% or</span>
+                <input
+                  type="number"
+                  value={o.price || ''}
+                  placeholder="price"
+                  title="Absolute price; overrides % when set"
+                  onChange={(e) => {
+                    const next = [...tpOrders];
+                    next[i] = { ...o, price: Number(e.target.value) };
+                    setTpOrders(next);
+                  }}
+                />
                 <input
                   type="number"
                   value={o.piecePct}
@@ -234,7 +278,15 @@ export function OrderPanel() {
         {slOn && (
           <div className="row">
             <label>Offset %</label>
-            <input type="number" value={slOfs} onChange={(e) => setSlOfs(Number(e.target.value))} />
+            <input type="number" value={slOfs} disabled={Number(slPrice) > 0} onChange={(e) => setSlOfs(Number(e.target.value))} />
+            <span className="dim">or</span>
+            <input
+              type="number"
+              value={slPrice}
+              placeholder="price"
+              title="Absolute stop price; overrides % when set"
+              onChange={(e) => setSlPrice(e.target.value)}
+            />
             <select
               title="Price touch fires instantly; a candle option fires only when that candle closes beyond the level (server must be running)"
               value={slTrig}

@@ -1,7 +1,16 @@
 import type { CloseModule, DcaModule, GridConfig, Hook, OpenModule, SlModule, SlxModule, TpModule } from '../store/types.js';
 
 export function defaultGridConfig(): GridConfig {
-  return { count: 4, firstOfsPct: 0.5, lastOfsPct: 3, qtyFactor: 1, density: 1 };
+  return {
+    count: 4,
+    priceMode: 'offset',
+    firstPrice: 0,
+    lastPrice: 0,
+    firstOfsPct: 0.5,
+    lastOfsPct: 3,
+    qtyFactor: 1,
+    density: 1,
+  };
 }
 
 export function defaultOpenModule(): OpenModule {

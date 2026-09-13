@@ -219,6 +219,9 @@ export function buildRouter(engine: TradingEngine): Router {
       grid: z
         .object({
           count: z.number().int().min(2).max(30),
+          priceMode: z.enum(['offset', 'price']).optional(),
+          firstPrice: z.number().min(0).optional(),
+          lastPrice: z.number().min(0).optional(),
           firstOfsPct: z.number().min(0),
           lastOfsPct: z.number().min(0),
           qtyFactor: z.number().positive().default(1),

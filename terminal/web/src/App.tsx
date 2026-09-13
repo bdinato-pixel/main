@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { connectWs } from './api';
 import { useStore } from './store';
 import { Chart } from './components/Chart';
@@ -59,20 +60,27 @@ export default function App() {
       </div>
       {error && <div className="error-bar">⚠ {error}</div>}
       {page === 'terminal' && (
-        <div className="layout">
-          <div className="panel panel-tickers">
+        <PanelGroup direction="horizontal" className="layout" autoSaveId="th-cols" id="th-cols">
+          <Panel defaultSize={16} minSize={10} className="panel panel-tickers" order={1}>
             <TickerList />
-          </div>
-          <div className="panel panel-chart">
-            <Chart />
-          </div>
-          <div className="panel panel-order">
+          </Panel>
+          <PanelResizeHandle className="resize-h" />
+          <Panel defaultSize={64} minSize={30} order={2}>
+            <PanelGroup direction="vertical" autoSaveId="th-rows" id="th-rows">
+              <Panel defaultSize={66} minSize={20} className="panel panel-chart" order={1}>
+                <Chart />
+              </Panel>
+              <PanelResizeHandle className="resize-v" />
+              <Panel defaultSize={34} minSize={12} className="panel panel-bottom" order={2}>
+                <BottomTabs />
+              </Panel>
+            </PanelGroup>
+          </Panel>
+          <PanelResizeHandle className="resize-h" />
+          <Panel defaultSize={20} minSize={12} className="panel panel-order" order={3}>
             <OrderPanel />
-          </div>
-          <div className="panel panel-bottom">
-            <BottomTabs />
-          </div>
-        </div>
+          </Panel>
+        </PanelGroup>
       )}
       {page === 'hooks' && <HooksPage />}
       {page === 'settings' && <SettingsPage />}

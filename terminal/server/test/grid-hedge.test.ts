@@ -51,6 +51,37 @@ test('planGrid: qtyFactor scales successive orders; short grids sit above price'
   assert.deepEqual(plan.map((o) => o.qty), [1, 2, 4]); // weights 1:2:4 of 7
 });
 
+test('planGrid: absolute price mode interpolates between first/last prices', () => {
+  const plan = planGrid(
+    { count: 4, priceMode: 'price', firstPrice: 99, lastPrice: 96, firstOfsPct: 0, lastOfsPct: 0, qtyFactor: 1, density: 1 },
+    'long',
+    100,
+    4,
+    INFO,
+  );
+  // Even interpolation 99 → 96 across 4 orders, ignoring % offsets and ref.
+  assert.deepEqual(plan.map((o) => o.price), [99, 98, 97, 96]);
+  assert.deepEqual(plan.map((o) => o.qty), [1, 1, 1, 1]);
+  // Works without a reference price (limit grid set purely by price).
+  const noRef = planGrid(
+    { count: 3, priceMode: 'price', firstPrice: 101, lastPrice: 103, firstOfsPct: 0, lastOfsPct: 0, qtyFactor: 1, density: 1 },
+    'short',
+    0,
+    3,
+    INFO,
+  );
+  assert.deepEqual(noRef.map((o) => o.price), [101, 102, 103]);
+  // Falls back to offset mode when absolute prices are missing.
+  const fallback = planGrid(
+    { count: 2, priceMode: 'price', firstPrice: 0, lastPrice: 0, firstOfsPct: 1, lastOfsPct: 2, qtyFactor: 1, density: 1 },
+    'long',
+    100,
+    2,
+    INFO,
+  );
+  assert.deepEqual(fallback.map((o) => o.price), [99, 98]);
+});
+
 test('planGrid: density shifts spacing; sub-minimum orders are dropped', () => {
   const dense = planGrid({ count: 3, firstOfsPct: 0, lastOfsPct: 4, qtyFactor: 1, density: 2 }, 'long', 100, 3, INFO);
   // density 2 → offsets 0, 4*(0.5)^2 = 1, 4 → prices 100, 99, 96

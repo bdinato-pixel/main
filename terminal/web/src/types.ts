@@ -15,6 +15,9 @@ export interface TpOrderSpec {
 
 export interface GridConfig {
   count: number;
+  priceMode?: 'offset' | 'price';
+  firstPrice?: number;
+  lastPrice?: number;
   firstOfsPct: number;
   lastOfsPct: number;
   qtyFactor: number;

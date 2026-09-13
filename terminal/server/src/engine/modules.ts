@@ -9,12 +9,13 @@ export interface PlannedGridOrder {
 
 /**
  * Plan a grid of limit orders (Finandy "Order grid"): `totalQty` base units
- * spread over `grid.count` orders between firstOfsPct and lastOfsPct from
- * the reference price — below it for longs, above for shorts. Quantities
- * follow qtyFactor (1 = even, 2 = each next order doubles); spacing follows
- * the density curve (1 = even, >1 clusters toward the far edge, <1 toward
- * the near edge). Orders that fall below exchange minimums are dropped,
- * mirroring how exchanges reject them.
+ * spread over `grid.count` orders. Bounds come either from firstOfsPct /
+ * lastOfsPct as % from the reference price (below it for longs, above for
+ * shorts) or, when priceMode is 'price', from the absolute firstPrice /
+ * lastPrice. Quantities follow qtyFactor (1 = even, 2 = each next order
+ * doubles); spacing follows the density curve (1 = even, >1 clusters toward
+ * the far edge, <1 toward the near edge). Orders that fall below exchange
+ * minimums are dropped, mirroring how exchanges reject them.
  */
 export function planGrid(
   grid: GridConfig,
@@ -24,12 +25,19 @@ export function planGrid(
   info: SymbolInfo,
 ): PlannedGridOrder[] {
   const count = Math.max(2, Math.min(30, Math.round(grid.count)));
-  if (totalQty <= 0 || refPrice <= 0) return [];
-  const sign = dir === 'long' ? -1 : 1;
+  if (totalQty <= 0) return [];
   const density = grid.density > 0 ? grid.density : 1;
   const factor = grid.qtyFactor > 0 ? grid.qtyFactor : 1;
+
+  const useAbsolute =
+    grid.priceMode === 'price' && (grid.firstPrice ?? 0) > 0 && (grid.lastPrice ?? 0) > 0;
+  if (!useAbsolute && refPrice <= 0) return [];
+
+  const sign = dir === 'long' ? -1 : 1;
   const first = Math.max(0, grid.firstOfsPct);
   const last = Math.max(first, grid.lastOfsPct);
+  const firstP = grid.firstPrice ?? 0;
+  const lastP = grid.lastPrice ?? 0;
 
   const weights: number[] = [];
   for (let i = 0; i < count; i++) weights.push(factor ** i);
@@ -38,10 +46,13 @@ export function planGrid(
   const out: PlannedGridOrder[] = [];
   for (let i = 0; i < count; i++) {
     const u = count === 1 ? 0 : i / (count - 1);
-    const ofs = first + (last - first) * u ** density;
-    const price = quantizePrice(info, refPrice * (1 + (sign * ofs) / 100));
+    const t = u ** density;
+    const rawPrice = useAbsolute
+      ? firstP + (lastP - firstP) * t
+      : refPrice * (1 + (sign * (first + (last - first) * t)) / 100);
+    const price = quantizePrice(info, rawPrice);
     const qty = quantizeQty(info, (totalQty * weights[i]) / weightSum);
-    if (qty < info.minQty || qty <= 0) continue;
+    if (price <= 0 || qty < info.minQty || qty <= 0) continue;
     if (info.minNotional > 0 && qty * price < info.minNotional) continue;
     out.push({ price, qty });
   }

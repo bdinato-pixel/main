@@ -3,7 +3,16 @@ import { api } from '../api';
 import { useStore } from '../store';
 import type { GridConfig, Hook, MarketType } from '../types';
 
-const DEFAULT_GRID: GridConfig = { count: 4, firstOfsPct: 0.5, lastOfsPct: 3, qtyFactor: 1, density: 1 };
+const DEFAULT_GRID: GridConfig = {
+  count: 4,
+  priceMode: 'offset',
+  firstPrice: 0,
+  lastPrice: 0,
+  firstOfsPct: 0.5,
+  lastOfsPct: 3,
+  qtyFactor: 1,
+  density: 1,
+};
 
 const CANDLE_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h'];
 
@@ -43,19 +52,40 @@ function TriggerSelect({
 
 function GridFields({ grid, onChange }: { grid: GridConfig; onChange: (g: GridConfig) => void }) {
   const num = (v: string) => Number(v);
+  const mode = grid.priceMode ?? 'offset';
   return (
-    <div className="row">
-      <label>Orders</label>
-      <input type="number" min={2} max={30} value={grid.count} onChange={(e) => onChange({ ...grid, count: num(e.target.value) })} />
-      <label>First %</label>
-      <input type="number" value={grid.firstOfsPct} onChange={(e) => onChange({ ...grid, firstOfsPct: num(e.target.value) })} />
-      <label>Last %</label>
-      <input type="number" value={grid.lastOfsPct} onChange={(e) => onChange({ ...grid, lastOfsPct: num(e.target.value) })} />
-      <label title="Each next order's quantity is multiplied by this (1 = even)">Qty ×</label>
-      <input type="number" step={0.1} value={grid.qtyFactor} onChange={(e) => onChange({ ...grid, qtyFactor: num(e.target.value) })} />
-      <label title="1 = even spacing, >1 clusters orders toward the far edge, <1 toward the near edge">Density</label>
-      <input type="number" step={0.1} value={grid.density} onChange={(e) => onChange({ ...grid, density: num(e.target.value) })} />
-    </div>
+    <>
+      <div className="row">
+        <label>Orders</label>
+        <input type="number" min={2} max={30} value={grid.count} onChange={(e) => onChange({ ...grid, count: num(e.target.value) })} />
+        <label>Bounds by</label>
+        <select value={mode} onChange={(e) => onChange({ ...grid, priceMode: e.target.value as 'offset' | 'price' })}>
+          <option value="offset">Offset %</option>
+          <option value="price">Price</option>
+        </select>
+        {mode === 'offset' ? (
+          <>
+            <label>First %</label>
+            <input type="number" value={grid.firstOfsPct} onChange={(e) => onChange({ ...grid, firstOfsPct: num(e.target.value) })} />
+            <label>Last %</label>
+            <input type="number" value={grid.lastOfsPct} onChange={(e) => onChange({ ...grid, lastOfsPct: num(e.target.value) })} />
+          </>
+        ) : (
+          <>
+            <label title="Absolute price of the order nearest current price">First price</label>
+            <input type="number" value={grid.firstPrice ?? 0} onChange={(e) => onChange({ ...grid, firstPrice: num(e.target.value) })} />
+            <label title="Absolute price of the farthest order">Last price</label>
+            <input type="number" value={grid.lastPrice ?? 0} onChange={(e) => onChange({ ...grid, lastPrice: num(e.target.value) })} />
+          </>
+        )}
+      </div>
+      <div className="row">
+        <label title="Each next order's quantity is multiplied by this (1 = even)">Qty ×</label>
+        <input type="number" step={0.1} value={grid.qtyFactor} onChange={(e) => onChange({ ...grid, qtyFactor: num(e.target.value) })} />
+        <label title="1 = even spacing, >1 clusters orders toward the far edge, <1 toward the near edge">Density</label>
+        <input type="number" step={0.1} value={grid.density} onChange={(e) => onChange({ ...grid, density: num(e.target.value) })} />
+      </div>
+    </>
   );
 }
 
@@ -434,7 +464,15 @@ function HookEditor({ hook }: { hook: Hook }) {
             <input
               type="number"
               value={o.ofsPct}
+              disabled={o.price > 0}
               onChange={(e) => patch((d) => (d.tp.orders[i].ofsPct = Number(e.target.value)))}
+            />
+            <label title="Absolute price; overrides offset % when set (0 = use %)">or price</label>
+            <input
+              type="number"
+              value={o.price || ''}
+              placeholder="—"
+              onChange={(e) => patch((d) => (d.tp.orders[i].price = Number(e.target.value)))}
             />
             <label>piece %</label>
             <input
@@ -461,7 +499,19 @@ function HookEditor({ hook }: { hook: Hook }) {
             <input type="checkbox" checked={draft.sl.enabled} onChange={(e) => patch((d) => (d.sl.enabled = e.target.checked))} /> SL
           </label>
           <label>offset %</label>
-          <input type="number" value={draft.sl.ofsPct} onChange={(e) => patch((d) => (d.sl.ofsPct = Number(e.target.value)))} />
+          <input
+            type="number"
+            value={draft.sl.ofsPct}
+            disabled={draft.sl.price > 0}
+            onChange={(e) => patch((d) => (d.sl.ofsPct = Number(e.target.value)))}
+          />
+          <label title="Absolute stop price; overrides offset % when set (0 = use %)">or price</label>
+          <input
+            type="number"
+            value={draft.sl.price || ''}
+            placeholder="—"
+            onChange={(e) => patch((d) => (d.sl.price = Number(e.target.value)))}
+          />
           <label title="Recompute SL from the new average after DCA">
             <input type="checkbox" checked={draft.sl.reorderAfterDca} onChange={(e) => patch((d) => (d.sl.reorderAfterDca = e.target.checked))} /> reorder after DCA
           </label>
