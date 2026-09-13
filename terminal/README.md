@@ -102,9 +102,21 @@ npm run dev:web        # vite dev server on :5173 (proxies /api, /hook, /ws)
 work — the TP/SL reconcile loop, candle-close stops, trailing) run in the
 background, on boot, and restart itself if it crashes, install it as a service.
 
-Build once first (`npm run build`). Then pick one:
+**Windows — one command (recommended).** From the repo, run the bundled script
+in an **Administrator** PowerShell — it builds if needed, downloads NSSM,
+registers the service with the correct paths, and starts it:
 
-**Windows — NSSM (recommended).** A true service; survives logout, auto-starts
+```powershell
+powershell -ExecutionPolicy Bypass -File terminal\scripts\install-service.ps1
+```
+
+The UI is at <http://localhost:8720>. After a `git pull`, refresh with
+`... install-service.ps1 -Update`; remove with `... install-service.ps1 -Uninstall`.
+(The script self-elevates if you forget to run it as admin.)
+
+Prefer to do it by hand, or on another OS? Build once (`npm run build`), then:
+
+**Windows — NSSM (manual).** A true service; survives logout, auto-starts
 on boot, restarts on crash. Download `nssm.exe` from <https://nssm.cc>, then in
 an **Administrator** terminal (adjust the two paths — use `where node` to find
 node.exe):
