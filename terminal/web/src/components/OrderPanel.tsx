@@ -44,6 +44,11 @@ export function OrderPanel() {
   const [parsed, setParsed] = useState<ParsedSignal | null>(null);
 
   const lastPrice = prices[symbol] ?? tickers.find((t) => t.symbol === symbol)?.last ?? 0;
+  // Exchange metadata for the pair; absent means it isn't tradable on this
+  // market (e.g. a non-perpetual listing that only shows in the ticker feed).
+  const info = useStore((s) => s.symbols.find((x) => x.symbol === symbol));
+  const symbolsLoaded = useStore((s) => s.symbols.length > 0);
+  const tradable = !!info || !symbolsLoaded;
   const quoteFree = balances.find((b) => b.asset === 'USDT')?.free ?? 0;
   // Account equity ("full portfolio"): USDT wallet (free+locked) + open uPnL.
   const equity =
@@ -393,7 +398,13 @@ export function OrderPanel() {
         )}
       </div>
 
-      <button className={side} disabled={busy || qty <= 0} onClick={() => void submit()}>
+      {!tradable && (
+        <div className="row" style={{ fontSize: 12, color: 'var(--red)' }}>
+          ⚠ {symbol} isn’t tradable on {market === 'futures' ? 'USDⓈ-M Futures' : 'Spot'} — pick another pair.
+        </div>
+      )}
+
+      <button className={side} disabled={busy || qty <= 0 || !tradable} onClick={() => void submit()}>
         {busy ? '…' : `${side === 'buy' ? 'Buy / Long' : 'Sell / Short'} ${symbol.replace('USDT', '')}`}
       </button>
     </div>
