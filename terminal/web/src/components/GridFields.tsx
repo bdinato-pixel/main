@@ -1,4 +1,5 @@
 import type { GridConfig, GridLevel } from '../types';
+import { NumberInput } from './NumberInput';
 
 export const DEFAULT_GRID: GridConfig = {
   count: 4,
@@ -33,7 +34,6 @@ export function GridFields({
   onChange: (g: GridConfig) => void;
   side?: 'buy' | 'sell';
 }) {
-  const num = (v: string) => Number(v);
   const mode = grid.priceMode ?? 'offset';
 
   const setMode = (m: 'offset' | 'price' | 'levels') => {
@@ -57,7 +57,7 @@ export function GridFields({
     <>
       <div className="row">
         <label>Orders</label>
-        <input type="number" min={2} max={30} value={grid.count} onChange={(e) => setCount(num(e.target.value))} />
+        <NumberInput integer min={2} max={30} value={grid.count} onChange={(v) => setCount(v ?? 2)} />
         <label>Bounds by</label>
         <select value={mode} onChange={(e) => setMode(e.target.value as 'offset' | 'price' | 'levels')}>
           <option value="offset">Offset %</option>
@@ -67,17 +67,17 @@ export function GridFields({
         {mode === 'offset' && (
           <>
             <label>First %</label>
-            <input type="number" value={grid.firstOfsPct} onChange={(e) => onChange({ ...grid, firstOfsPct: num(e.target.value) })} />
+            <NumberInput value={grid.firstOfsPct} onChange={(v) => onChange({ ...grid, firstOfsPct: v ?? 0 })} />
             <label>Last %</label>
-            <input type="number" value={grid.lastOfsPct} onChange={(e) => onChange({ ...grid, lastOfsPct: num(e.target.value) })} />
+            <NumberInput value={grid.lastOfsPct} onChange={(v) => onChange({ ...grid, lastOfsPct: v ?? 0 })} />
           </>
         )}
         {mode === 'price' && (
           <>
             <label title="Absolute price of the order nearest current price">First price</label>
-            <input type="number" value={grid.firstPrice || ''} onChange={(e) => onChange({ ...grid, firstPrice: num(e.target.value) })} />
+            <NumberInput allowEmpty placeholder="price" value={grid.firstPrice} onChange={(v) => onChange({ ...grid, firstPrice: v ?? 0 })} />
             <label title="Absolute price of the farthest order">Last price</label>
-            <input type="number" value={grid.lastPrice || ''} onChange={(e) => onChange({ ...grid, lastPrice: num(e.target.value) })} />
+            <NumberInput allowEmpty placeholder="price" value={grid.lastPrice} onChange={(v) => onChange({ ...grid, lastPrice: v ?? 0 })} />
           </>
         )}
       </div>
@@ -90,9 +90,9 @@ export function GridFields({
                 Order {i + 1}
               </span>
               <label>price</label>
-              <input type="number" value={l.price || ''} placeholder="price" onChange={(e) => setLevel(i, { price: num(e.target.value) })} />
+              <NumberInput allowEmpty placeholder="price" value={l.price} onChange={(v) => setLevel(i, { price: v ?? 0 })} />
               <label title="Share of the total size for this order; blank orders split the rest evenly">qty %</label>
-              <input type="number" value={l.qtyPct ?? ''} placeholder="auto" onChange={(e) => setLevel(i, { qtyPct: e.target.value === '' ? undefined : num(e.target.value) })} />
+              <NumberInput allowEmpty placeholder="auto" value={l.qtyPct} onChange={(v) => setLevel(i, { qtyPct: v })} />
             </div>
           ))}
           <div className="row dim" style={{ fontSize: 12 }}>
@@ -102,9 +102,9 @@ export function GridFields({
       ) : (
         <div className="row">
           <label title="Each next order's quantity is multiplied by this (1 = even)">Qty ×</label>
-          <input type="number" step={0.1} value={grid.qtyFactor} onChange={(e) => onChange({ ...grid, qtyFactor: num(e.target.value) })} />
+          <NumberInput value={grid.qtyFactor} onChange={(v) => onChange({ ...grid, qtyFactor: v ?? 1 })} />
           <label title="1 = even spacing, >1 clusters orders toward the far edge, <1 toward the near edge">Density</label>
-          <input type="number" step={0.1} value={grid.density} onChange={(e) => onChange({ ...grid, density: num(e.target.value) })} />
+          <NumberInput value={grid.density} onChange={(v) => onChange({ ...grid, density: v ?? 1 })} />
           {side && mode === 'offset' && (
             <span className="dim" style={{ fontSize: 12 }}>
               {grid.count} orders {grid.firstOfsPct}–{grid.lastOfsPct}% {side === 'buy' ? 'below' : 'above'} price
