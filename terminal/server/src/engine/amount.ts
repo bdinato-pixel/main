@@ -6,7 +6,7 @@ export interface AmountCtx {
   leverage: number;
   /** Free quote balance on the market. */
   freeBalance: number;
-  /** Wallet balance + open positions volume + unrealized PnL. */
+  /** Account equity: wallet balance + unrealized PnL (the full portfolio). */
   fullBalance: number;
   /** Current position, when averaging/closing. */
   positionQty?: number;

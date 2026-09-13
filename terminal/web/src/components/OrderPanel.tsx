@@ -5,11 +5,11 @@ import type { GridConfig, TpOrderSpec } from '../types';
 import { DEFAULT_GRID, GridFields, gridPreviewPrices } from './GridFields';
 import { NumberInput } from './NumberInput';
 
-type SizeUnit = 'usd' | 'base' | 'freePct';
+type SizeUnit = 'usd' | 'base' | 'freePct' | 'fullPct' | 'fullPctLev';
 const CANDLE_TFS = ['1m', '3m', '5m', '15m', '1h', '4h', '1d', '1w'];
 
 export function OrderPanel() {
-  const { market, symbol, prices, tickers, balances, setError, loadAccountState } = useStore();
+  const { market, symbol, prices, tickers, balances, positions, setError, loadAccountState } = useStore();
   const account = useStore((s) => s.account());
 
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
@@ -39,6 +39,10 @@ export function OrderPanel() {
 
   const lastPrice = prices[symbol] ?? tickers.find((t) => t.symbol === symbol)?.last ?? 0;
   const quoteFree = balances.find((b) => b.asset === 'USDT')?.free ?? 0;
+  // Account equity ("full portfolio"): USDT wallet (free+locked) + open uPnL.
+  const equity =
+    balances.filter((b) => b.asset === 'USDT').reduce((s, b) => s + b.free + b.locked, 0) +
+    positions.reduce((s, p) => s + (p.unrealizedPnl || 0), 0);
   const setPreview = useStore((s) => s.setPreview);
   const setApplyPreviewDrag = useStore((s) => s.setApplyPreviewDrag);
   const setTp = (i: number, patch: Partial<TpOrderSpec>) =>
@@ -106,21 +110,34 @@ export function OrderPanel() {
     if (!Number.isFinite(size) || size <= 0) return 0;
     const ref = (limitPrice ?? 0) > 0 && type !== 'market' && !gridOn ? (limitPrice as number) : lastPrice;
     if (ref <= 0) return 0;
+    const lev = market === 'futures' ? leverage : 1;
     if (sizeUnit === 'base') return size;
     if (sizeUnit === 'usd') return size / ref;
-    return ((quoteFree * size) / 100) * (market === 'futures' ? leverage : 1) / ref;
-  }, [size, sizeUnit, lastPrice, limitPrice, type, gridOn, quoteFree, leverage, market]);
+    if (sizeUnit === 'freePct') return ((quoteFree * size) / 100) * lev / ref;
+    if (sizeUnit === 'fullPct') return (equity * size) / 100 / ref;
+    // fullPctLev
+    return ((equity * size) / 100) * lev / ref;
+  }, [size, sizeUnit, lastPrice, limitPrice, type, gridOn, quoteFree, equity, leverage, market]);
 
   const submit = async () => {
     setBusy(true);
     try {
+      // Portfolio-percentage sizing is resolved server-side against live equity,
+      // so send the amount spec instead of a client-computed quantity.
+      const amount =
+        sizeUnit === 'fullPct'
+          ? { mode: 'full_balance_pct', value: size }
+          : sizeUnit === 'fullPctLev'
+            ? { mode: 'full_balance_pct_lev', value: size }
+            : undefined;
       await api.placeOrder({
         accountId: account,
         market,
         symbol,
         side,
         type,
-        qty,
+        qty: amount ? undefined : qty,
+        amount,
         price: type === 'limit' && !gridOn ? limitPrice || undefined : undefined,
         stopPrice: type === 'stop_market' && !gridOn ? stopPrice || undefined : undefined,
         reduceOnly: reduceOnly || undefined,
@@ -205,10 +222,13 @@ export function OrderPanel() {
           <option value="usd">USDT</option>
           <option value="base">{symbol.replace('USDT', '')}</option>
           <option value="freePct">% free{market === 'futures' ? ' × lev' : ''}</option>
+          <option value="fullPct">% portfolio</option>
+          {market === 'futures' && <option value="fullPctLev">% portfolio × lev</option>}
         </select>
       </div>
       <div className="row dim" style={{ fontSize: 12 }}>
-        ≈ {qty > 0 ? qty.toPrecision(6) : '—'} {symbol.replace('USDT', '')} · free {quoteFree.toFixed(2)} USDT
+        ≈ {qty > 0 ? qty.toPrecision(6) : '—'} {symbol.replace('USDT', '')} · free {quoteFree.toFixed(2)} · portfolio{' '}
+        {equity.toFixed(2)} USDT
       </div>
 
       {market === 'futures' && (
