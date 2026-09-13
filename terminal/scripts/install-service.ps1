@@ -137,7 +137,9 @@ if ($Update) {
 }
 
 # --- Install / reinstall -----------------------------------------------------
-if (-not (Test-Path $dist)) { Invoke-Build }
+# Always rebuild so a fresh install deploys the CURRENT source — a stale `dist`
+# left over from an older checkout would otherwise be served silently.
+Invoke-Build
 if (-not (Test-Path $dist)) { throw "Build output not found at $dist" }
 
 $nodeExe = Get-NodePath
