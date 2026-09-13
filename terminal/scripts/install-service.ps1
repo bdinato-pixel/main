@@ -38,6 +38,23 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Run an external program WITHOUT letting its stderr become a terminating error.
+# In Windows PowerShell 5.1, a native command that writes to stderr raises a
+# NativeCommandError under $ErrorActionPreference='Stop' (even with 2>$null) —
+# e.g. `nssm status` on a missing service. Returns the process exit code.
+function Invoke-Native {
+  param(
+    [Parameter(Mandatory)][string]$FilePath,
+    [Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgList
+  )
+  $old = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    & $FilePath @ArgList 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+    return $LASTEXITCODE
+  } finally { $ErrorActionPreference = $old }
+}
+
 function Test-Admin {
   $id = [Security.Principal.WindowsIdentity]::GetCurrent()
   (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole(
@@ -76,20 +93,18 @@ function Invoke-Build {
   Write-Host 'Building (npm install + npm run build)...' -ForegroundColor Cyan
   Push-Location $terminalDir
   try {
-    & $npm install
-    if ($LASTEXITCODE -ne 0) { throw 'npm install failed.' }
-    & $npm run build
-    if ($LASTEXITCODE -ne 0) { throw 'npm run build failed.' }
+    if ((Invoke-Native $npm 'install') -ne 0) { throw 'npm install failed.' }
+    if ((Invoke-Native $npm 'run' 'build') -ne 0) { throw 'npm run build failed.' }
   } finally { Pop-Location }
 }
 
 # --- Uninstall ---------------------------------------------------------------
 if ($Uninstall) {
   Write-Host "Removing service '$ServiceName'..." -ForegroundColor Yellow
-  cmd /c "sc.exe stop `"$ServiceName`"" | Out-Null
+  Invoke-Native 'sc.exe' 'stop' $ServiceName | Out-Null
   Start-Sleep -Seconds 1
-  cmd /c "sc.exe delete `"$ServiceName`"" | Out-Null
-  Write-Host "Removed (if it existed)." -ForegroundColor Green
+  Invoke-Native 'sc.exe' 'delete' $ServiceName | Out-Null
+  Write-Host 'Removed (if it existed).' -ForegroundColor Green
   exit
 }
 
@@ -116,7 +131,7 @@ if ($Update) {
   Invoke-Build
   $nssm = Get-Nssm
   Write-Host "Restarting '$ServiceName'..." -ForegroundColor Cyan
-  & $nssm restart $ServiceName
+  Invoke-Native $nssm 'restart' $ServiceName | Out-Null
   Write-Host "Updated. UI at http://localhost:$Port" -ForegroundColor Green
   exit
 }
@@ -130,26 +145,32 @@ $nssm = Get-Nssm
 New-Item -ItemType Directory -Force -Path (Join-Path $serverDir 'logs') | Out-Null
 
 # Replace any existing definition so paths/port stay correct on re-run.
-& $nssm status $ServiceName 2>$null | Out-Null
-if ($LASTEXITCODE -eq 0) {
+if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
   Write-Host "Reinstalling existing service '$ServiceName'..." -ForegroundColor Yellow
-  & $nssm stop $ServiceName 2>$null | Out-Null
-  & $nssm remove $ServiceName confirm | Out-Null
+  Invoke-Native $nssm 'stop' $ServiceName | Out-Null
+  Invoke-Native $nssm 'remove' $ServiceName 'confirm' | Out-Null
+  Start-Sleep -Seconds 1
 }
 
 Write-Host "Installing service '$ServiceName'..." -ForegroundColor Cyan
-& $nssm install $ServiceName $nodeExe 'dist\index.js'
-& $nssm set $ServiceName AppDirectory $serverDir
-& $nssm set $ServiceName Start SERVICE_AUTO_START
-& $nssm set $ServiceName AppEnvironmentExtra "PORT=$Port"
-& $nssm set $ServiceName AppStdout (Join-Path $serverDir 'logs\out.log')
-& $nssm set $ServiceName AppStderr (Join-Path $serverDir 'logs\err.log')
-& $nssm set $ServiceName AppRotateFiles 1
-& $nssm set $ServiceName Description 'Self-hosted crypto trading terminal'
-& $nssm start $ServiceName
+if ((Invoke-Native $nssm 'install' $ServiceName $nodeExe 'dist\index.js') -ne 0) { throw 'nssm install failed.' }
+Invoke-Native $nssm 'set' $ServiceName 'AppDirectory' $serverDir | Out-Null
+Invoke-Native $nssm 'set' $ServiceName 'Start' 'SERVICE_AUTO_START' | Out-Null
+Invoke-Native $nssm 'set' $ServiceName 'AppEnvironmentExtra' "PORT=$Port" | Out-Null
+Invoke-Native $nssm 'set' $ServiceName 'AppStdout' (Join-Path $serverDir 'logs\out.log') | Out-Null
+Invoke-Native $nssm 'set' $ServiceName 'AppStderr' (Join-Path $serverDir 'logs\err.log') | Out-Null
+Invoke-Native $nssm 'set' $ServiceName 'AppRotateFiles' '1' | Out-Null
+Invoke-Native $nssm 'set' $ServiceName 'Description' 'Self-hosted crypto trading terminal' | Out-Null
+Invoke-Native $nssm 'start' $ServiceName | Out-Null
 
+Start-Sleep -Seconds 2
+$svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 Write-Host ''
-Write-Host "Done. '$ServiceName' is running and will start on boot." -ForegroundColor Green
+if ($svc -and $svc.Status -eq 'Running') {
+  Write-Host "Done. '$ServiceName' is running and will start on boot." -ForegroundColor Green
+} else {
+  Write-Warning "Service installed but status is '$($svc.Status)'. Check $serverDir\logs\err.log"
+}
 Write-Host "Open the terminal at http://localhost:$Port" -ForegroundColor Green
 Write-Host "Data file: $serverDir\data\terminal.json" -ForegroundColor DarkGray
 Write-Host "Update later: install-service.ps1 -Update   |   Remove: install-service.ps1 -Uninstall" -ForegroundColor DarkGray
