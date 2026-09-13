@@ -108,6 +108,14 @@ textarea {
 .header .logo span {
   color: var(--accent);
 }
+.header .market-label {
+  font-weight: 600;
+  color: #fff;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-input);
+}
 .header nav {
   display: flex;
   gap: 4px;
