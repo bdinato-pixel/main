@@ -129,6 +129,8 @@ export function OrderPanel() {
   const applySignal = (p: ParsedSignal) => {
     if (p.symbol && p.symbol !== symbol) setSymbol(p.symbol);
     if (p.side) setSide(p.side);
+    if (p.leverage) setLeverage(p.leverage);
+    if (p.marginMode) setMarginMode(p.marginMode);
     if (p.entries.length >= 2) {
       setGridOn(true);
       setGrid({ ...DEFAULT_GRID, count: p.entries.length, priceMode: 'levels', levels: p.entries.map((price) => ({ price })) });
@@ -424,6 +426,11 @@ export function OrderPanel() {
                   {parsed.side ?? '—'}
                 </span>
               </div>
+              {(parsed.leverage || parsed.marginMode) && (
+                <div className="dim" style={{ fontSize: 12 }}>
+                  {parsed.leverage ? `${parsed.leverage}x` : ''} {parsed.marginMode ?? ''}
+                </div>
+              )}
               <div className="mono"><span className="dim">Entries </span>{parsed.entries.join(', ') || '—'}</div>
               <div className="mono"><span className="dim">TP </span>{parsed.tps.join(', ') || '—'}</div>
               <div className="mono">
