@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { useStore } from '../store';
 import type { GridConfig, TpOrderSpec } from '../types';
-import { DEFAULT_GRID, GridFields } from './GridFields';
+import { DEFAULT_GRID, GridFields, gridPreviewPrices } from './GridFields';
 import { NumberInput } from './NumberInput';
 
 type SizeUnit = 'usd' | 'base' | 'freePct';
@@ -39,8 +39,38 @@ export function OrderPanel() {
 
   const lastPrice = prices[symbol] ?? tickers.find((t) => t.symbol === symbol)?.last ?? 0;
   const quoteFree = balances.find((b) => b.asset === 'USDT')?.free ?? 0;
+  const setPreview = useStore((s) => s.setPreview);
   const setTp = (i: number, patch: Partial<TpOrderSpec>) =>
     setTpOrders((prev) => prev.map((o, j) => (j === i ? { ...o, ...patch } : o)));
+
+  // Live preview of the order being configured, drawn on the chart in realtime.
+  useEffect(() => {
+    const dir = side === 'buy' ? 1 : -1; // long → +, short → -
+    let entries: number[] = [];
+    if (gridOn) entries = gridPreviewPrices(grid, side, lastPrice);
+    else if (type === 'limit' && limitPrice) entries = [limitPrice];
+    else if (type === 'stop_market' && stopPrice) entries = [stopPrice];
+    const entryRef = entries.length ? entries.reduce((a, b) => a + b, 0) / entries.length : lastPrice;
+
+    const tps =
+      tpOn && entryRef > 0
+        ? tpOrders
+            .map((o) => (o.price > 0 ? o.price : entryRef * (1 + (dir * o.ofsPct) / 100)))
+            .filter((p) => p > 0)
+        : [];
+    const sl =
+      slOn && entryRef > 0
+        ? (slPrice ?? 0) > 0
+          ? slPrice
+          : entryRef * (1 - (dir * slOfs) / 100)
+        : undefined;
+
+    setPreview({ symbol, market, side, entries, tps, sl });
+    return () => setPreview(null);
+  }, [
+    symbol, market, side, type, gridOn, grid, limitPrice, stopPrice,
+    tpOn, tpOrders, slOn, slOfs, slPrice, lastPrice, setPreview,
+  ]);
 
   const qty = useMemo(() => {
     if (!Number.isFinite(size) || size <= 0) return 0;

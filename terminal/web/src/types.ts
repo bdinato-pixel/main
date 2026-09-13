@@ -199,6 +199,16 @@ export interface Settings {
   allowedSignalIps: string[];
 }
 
+/** Live preview of the order being configured in the order panel. */
+export interface OrderPreview {
+  symbol: string;
+  market: MarketType;
+  side: 'buy' | 'sell';
+  entries: number[];
+  tps: number[];
+  sl?: number;
+}
+
 export interface Kline {
   openTime: number;
   open: number;

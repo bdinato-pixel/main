@@ -7,6 +7,7 @@ import type {
   ManagedPosition,
   MarketType,
   OpenOrder,
+  OrderPreview,
   Settings,
   SignalLogEntry,
   SymbolInfo,
@@ -27,6 +28,7 @@ interface AppState {
   orders: OpenOrder[];
   signals: SignalLogEntry[];
   prices: Record<string, number>;
+  preview: OrderPreview | null;
   error: string | null;
 
   account: () => string;
@@ -35,6 +37,7 @@ interface AppState {
   setInterval: (i: string) => void;
   setError: (e: string | null) => void;
   setPrice: (symbol: string, price: number) => void;
+  setPreview: (p: OrderPreview | null) => void;
   loadStatic: () => Promise<void>;
   loadAccountState: () => Promise<void>;
   loadHooks: () => Promise<void>;
@@ -56,6 +59,7 @@ export const useStore = create<AppState>((set, get) => ({
   orders: [],
   signals: [],
   prices: {},
+  preview: null,
   error: null,
 
   account: () => get().settings?.activeAccountId ?? 'paper',
@@ -68,6 +72,7 @@ export const useStore = create<AppState>((set, get) => ({
   setInterval: (interval) => set({ interval }),
   setError: (error) => set({ error }),
   setPrice: (symbol, price) => set((s) => ({ prices: { ...s.prices, [symbol]: price } })),
+  setPreview: (preview) => set({ preview }),
 
   loadStatic: async () => {
     try {

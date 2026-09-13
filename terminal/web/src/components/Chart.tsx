@@ -29,6 +29,8 @@ export function Chart() {
   const price = useStore((s) => s.prices[symbol]);
   const info = useStore((s) => s.symbols.find((x) => x.symbol === symbol));
   const managed = useStore((s) => s.managed.find((p) => p.symbol === symbol && p.market === market));
+  const orders = useStore((s) => s.orders);
+  const preview = useStore((s) => s.preview);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -141,23 +143,44 @@ export function Chart() {
     series.update(updated as never);
   }, [price]);
 
-  // Overlay entry/TP/SL lines for the managed position on this pair.
+  // Overlay lines: the managed position, resting exchange orders, and a live
+  // dotted preview of the order currently being configured in the panel.
   useEffect(() => {
     const series = seriesRef.current;
     if (!series) return;
     for (const line of linesRef.current) series.removePriceLine(line);
     linesRef.current = [];
-    if (!managed) return;
-    const mk = (value: number, color: string, title: string) =>
-      linesRef.current.push(
-        series.createPriceLine({ price: value, color, title, lineWidth: 1, lineStyle: LineStyle.Dashed }),
-      );
-    mk(managed.entryPrice, '#4f8cc9', `entry ${managed.side}`);
-    const sl = managed.slPrice ?? managed.virtualSlPrice;
-    if (sl) mk(sl, '#ef5350', 'SL');
-    if (managed.trailing?.armed) mk(managed.trailing.stopPrice, '#e2b93d', 'trail');
-    for (const [i, lvl] of (managed.tpLevels ?? []).entries()) mk(lvl.price, '#26a69a', `TP${i + 1}`);
-  }, [managed]);
+    const mk = (value: number, color: string, title: string, lineStyle: LineStyle) => {
+      if (!(value > 0)) return;
+      linesRef.current.push(series.createPriceLine({ price: value, color, title, lineWidth: 1, lineStyle }));
+    };
+
+    // 1. Managed position (dashed).
+    if (managed) {
+      mk(managed.entryPrice, '#4f8cc9', `entry ${managed.side}`, LineStyle.Dashed);
+      const sl = managed.slPrice ?? managed.virtualSlPrice;
+      if (sl) mk(sl, '#ef5350', 'SL', LineStyle.Dashed);
+      if (managed.trailing?.armed) mk(managed.trailing.stopPrice, '#e2b93d', 'trail', LineStyle.Dashed);
+      for (const [i, lvl] of (managed.tpLevels ?? []).entries()) mk(lvl.price, '#26a69a', `TP${i + 1}`, LineStyle.Dashed);
+    }
+
+    // 2. Resting exchange orders on this pair (solid). reduce-only sells/buys
+    // are exits (TP/SL), others are entries.
+    for (const o of orders.filter((x) => x.symbol === symbol)) {
+      const px = o.stopPrice > 0 ? o.stopPrice : o.price;
+      const kind = o.type.replace('_', ' ').toLowerCase();
+      const color = o.reduceOnly ? (o.side === 'SELL' ? '#26a69a' : '#ef5350') : o.side === 'BUY' ? '#26a69a' : '#ef5350';
+      mk(px, color, `${o.side.toLowerCase()} ${kind}`, LineStyle.Solid);
+    }
+
+    // 3. Live preview of the order being built (dotted, marked with •).
+    if (preview && preview.symbol === symbol && preview.market === market) {
+      const entryColor = preview.side === 'buy' ? '#4f8cc9' : '#b06fd6';
+      for (const p of preview.entries) mk(p, entryColor, 'entry •', LineStyle.Dotted);
+      for (const [i, p] of preview.tps.entries()) mk(p, '#26a69a', `TP${i + 1} •`, LineStyle.Dotted);
+      if (preview.sl) mk(preview.sl, '#ef5350', 'SL •', LineStyle.Dotted);
+    }
+  }, [managed, orders, preview, symbol, market]);
 
   const priceDecimals = decimalsFromTick(info?.tickSize);
 
