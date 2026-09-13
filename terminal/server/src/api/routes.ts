@@ -63,6 +63,27 @@ export function buildRouter(engine: TradingEngine): Router {
     res.json(db.positions.filter((p) => p.status === 'closed').sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0))),
   );
 
+  // Attach or replace TP/SL on an already-open exchange position (futures).
+  r.post('/api/positions/manage', async (req, res) => {
+    const schema = z.object({
+      accountId: z.string(),
+      market: marketSchema,
+      symbol: z.string().min(1),
+      side: z.enum(['long', 'short']).optional(),
+      tp: z.any().optional(),
+      sl: z.any().optional(),
+      slx: z.any().optional(),
+    });
+    const body = schema.safeParse(req.body);
+    if (!body.success) return res.status(400).json({ error: body.error.message });
+    try {
+      const detail = await engine.manageExistingPosition(body.data);
+      res.json({ ok: true, detail });
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
   r.post('/api/positions/:id/close', async (req, res) => {
     const fraction = Number((req.body as { fraction?: number })?.fraction ?? 1);
     try {
@@ -162,6 +183,9 @@ export function buildRouter(engine: TradingEngine): Router {
         adapter.getPositions(),
         adapter.getOpenOrders(),
       ]);
+      // Adopt any exchange position a terminal order opened but whose fill the
+      // engine missed, so its TP/SL get placed (reuses positions just fetched).
+      await engine.reconcile(accountId, market, positions).catch(() => {});
       res.json({ balances, positions, orders, managed: engine.db.openPositions(accountId) });
     } catch (e) {
       res.status(502).json({ error: e instanceof Error ? e.message : String(e) });

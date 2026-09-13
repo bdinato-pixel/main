@@ -28,6 +28,9 @@ const adapterFactory: AdapterFactory = async (accountId, market) => {
 };
 
 const engine = new TradingEngine(db, adapterFactory);
+// Safety net: adopt filled positions whose real-time fill event was missed and
+// place their TP/SL, so protection isn't lost to a websocket gap or restart.
+engine.startBackgroundReconcile();
 
 const app = express();
 app.use(buildRouter(engine));

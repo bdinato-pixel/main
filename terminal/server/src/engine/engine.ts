@@ -5,11 +5,12 @@ import type {
   Hook,
   ManagedPosition,
   MarketType,
+  PendingIntent,
   PositionDir,
   Signal,
   SignalLogEntry,
 } from '../store/types.js';
-import type { ExchangeAdapter, FillEvent, SymbolInfo } from '../exchange/types.js';
+import type { ExchangeAdapter, ExchangePosition, FillEvent, SymbolInfo } from '../exchange/types.js';
 import { computeBaseQty, type AmountCtx } from './amount.js';
 import { decide, relevantSide } from './decide.js';
 import { planGrid, planTpOrders, slPrice as computeSlPrice, updateTrailing } from './modules.js';
@@ -19,16 +20,8 @@ import { defaultGridConfig, defaultSlModule, defaultSlxModule, defaultTpModule }
 
 export type AdapterFactory = (accountId: string, market: MarketType) => Promise<ExchangeAdapter>;
 
-interface PendingIntent {
-  dir: PositionDir;
-  hookId?: string;
-  leverage: number;
-  marginMode: 'cross' | 'isolated';
-  config: ManagedPosition['config'];
-  /** Unfilled grid entry orders to carry onto the position. */
-  entryOrderIds?: string[];
-  createdAt: number;
-}
+/** Pending intents older than this with no matching position are dropped. */
+const INTENT_TTL_MS = 3 * 24 * 60 * 60_000;
 
 export interface ManualOrderInput {
   accountId: string;
@@ -60,12 +53,37 @@ export class TradingEngine extends EventEmitter {
   private trailingBusy = new Set<string>();
   private fillQueues = new Map<string, Promise<void>>();
   private priceListeners: ((symbol: string, price: number) => void)[] = [];
+  private reconcileTimer: NodeJS.Timeout | null = null;
 
   constructor(
     readonly db: Db,
     private readonly adapterFactory: AdapterFactory,
   ) {
     super();
+    // Restore intents whose fill may not have arrived before the last shutdown.
+    for (const [key, intent] of Object.entries(this.db.pendingIntents)) {
+      this.intents.set(key, intent);
+    }
+  }
+
+  /** Persist an intent so a missed fill or restart doesn't lose its TP/SL. */
+  private setIntent(key: string, intent: PendingIntent): void {
+    this.intents.set(key, intent);
+    this.db.pendingIntents[key] = intent;
+    this.db.save();
+  }
+
+  /** Persist a mutation to an already-stored intent (e.g. new order ids). */
+  private saveIntents(): void {
+    this.db.save();
+  }
+
+  private dropIntent(key: string): void {
+    this.intents.delete(key);
+    if (this.db.pendingIntents[key]) {
+      delete this.db.pendingIntents[key];
+      this.db.save();
+    }
   }
 
   private key(accountId: string, market: MarketType, symbol?: string): string {
@@ -347,6 +365,9 @@ export class TradingEngine extends EventEmitter {
     const positionSide = hedge ? (dir === 'long' ? 'LONG' : 'SHORT') : undefined;
     const ikey = this.intentKey(h.accountId, h.market, info.symbol, dir);
     const intent: PendingIntent = {
+      accountId: h.accountId,
+      market: h.market,
+      symbol: info.symbol,
       dir,
       hookId: h.id,
       leverage: o.leverage,
@@ -354,14 +375,14 @@ export class TradingEngine extends EventEmitter {
       config: this.snapshotConfig(h),
       createdAt: Date.now(),
     };
-    this.intents.set(ikey, intent);
+    this.setIntent(ikey, intent);
     adapter.watchPrice(info.symbol);
 
     try {
       if (o.entry === 'grid') {
         const levels = planGrid(o.grid ?? defaultGridConfig(), dir, price, rawQty, info);
         if (levels.length === 0) {
-          this.intents.delete(ikey);
+          this.dropIntent(ikey);
           return 'skipped: no grid orders above exchange minimums';
         }
         intent.entryOrderIds = [];
@@ -376,6 +397,7 @@ export class TradingEngine extends EventEmitter {
           });
           intent.entryOrderIds.push(res.orderId);
         }
+        this.saveIntents();
         // A marketable grid level may have filled during placement and
         // consumed the intent — carry the remaining order ids to the position.
         if (!this.intents.has(ikey)) {
@@ -385,6 +407,7 @@ export class TradingEngine extends EventEmitter {
             this.db.upsertPosition(pos);
           }
         }
+        this.scheduleReconcile(h.accountId, h.market);
         return `open ${dir} grid ${levels.length} orders / ${rawQty.toPrecision(6)} ${info.symbol}`;
       }
       const params = this.entryOrderParams(o.orderType, dir, price, o.priceOffsetPct);
@@ -395,9 +418,10 @@ export class TradingEngine extends EventEmitter {
         positionSide,
         ...params,
       });
+      this.scheduleReconcile(h.accountId, h.market);
       return `open ${dir} ${q.qty} ${info.symbol} @ ${params.type} (order ${res.orderId}, ${res.status})`;
     } catch (e) {
-      this.intents.delete(ikey);
+      this.dropIntent(ikey);
       throw e;
     }
   }
@@ -506,7 +530,10 @@ export class TradingEngine extends EventEmitter {
       const ctx = await this.amountCtx(adapter, info, h.open.leverage, price);
       extraQty = computeBaseQty(h.open.amount, ctx);
       closeQty = position.qty;
-      this.intents.set(this.intentKey(h.accountId, h.market, info.symbol, newDir), {
+      this.setIntent(this.intentKey(h.accountId, h.market, info.symbol, newDir), {
+        accountId: h.accountId,
+        market: h.market,
+        symbol: info.symbol,
         dir: newDir,
         hookId: h.id,
         leverage: h.open.leverage,
@@ -530,7 +557,7 @@ export class TradingEngine extends EventEmitter {
       });
       return `${reverse ? 'reverse' : 'close'} ${side} ${total} ${info.symbol} (order ${res.orderId}, ${res.status})`;
     } catch (e) {
-      if (reverse) this.intents.delete(this.intentKey(h.accountId, h.market, info.symbol, newDir));
+      if (reverse) this.dropIntent(this.intentKey(h.accountId, h.market, info.symbol, newDir));
       throw e;
     }
   }
@@ -586,6 +613,9 @@ export class TradingEngine extends EventEmitter {
     let intent: PendingIntent | undefined;
     if (opensPosition) {
       intent = {
+        accountId: input.accountId,
+        market: input.market,
+        symbol: input.symbol,
         dir,
         hookId: undefined,
         leverage: input.leverage ?? 1,
@@ -597,7 +627,7 @@ export class TradingEngine extends EventEmitter {
         },
         createdAt: Date.now(),
       };
-      this.intents.set(ikey, intent);
+      this.setIntent(ikey, intent);
       adapter.watchPrice(input.symbol);
     }
 
@@ -617,6 +647,7 @@ export class TradingEngine extends EventEmitter {
           });
           intent!.entryOrderIds.push(res.orderId);
         }
+        this.saveIntents();
         if (!this.intents.has(ikey)) {
           const pos = this.db.openPositionFor(input.accountId, input.market, input.symbol, hedge ? dir : undefined);
           if (pos) {
@@ -624,6 +655,7 @@ export class TradingEngine extends EventEmitter {
             this.db.upsertPosition(pos);
           }
         }
+        this.scheduleReconcile(input.accountId, input.market);
         this.changed();
         return `grid:${levels.length}`;
       }
@@ -637,10 +669,11 @@ export class TradingEngine extends EventEmitter {
         reduceOnly: input.reduceOnly && input.market === 'futures' && !hedge,
         positionSide,
       });
+      if (opensPosition) this.scheduleReconcile(input.accountId, input.market);
       this.changed();
       return res.orderId;
     } catch (e) {
-      if (opensPosition) this.intents.delete(ikey);
+      if (opensPosition) this.dropIntent(ikey);
       throw e;
     }
   }
@@ -687,7 +720,7 @@ export class TradingEngine extends EventEmitter {
       const intent = this.intents.get(ikey);
       if (!intent || intent.dir !== fillDir) return; // external or stale fill
       pos = this.createPosition(accountId, market, fill, intent);
-      this.intents.delete(ikey);
+      this.dropIntent(ikey);
       this.log('info', `position opened: ${pos.side} ${pos.qty} ${pos.symbol} @ ${pos.entryPrice}`);
       await this.applyProtection(adapter, pos);
       this.changed();
@@ -737,12 +770,38 @@ export class TradingEngine extends EventEmitter {
       const intent = this.intents.get(rkey);
       if (!hedge && rest > 0 && intent && intent.dir === fillDir) {
         const newPos = this.createPosition(accountId, market, { ...fill, qty: rest }, intent);
-        this.intents.delete(rkey);
+        this.dropIntent(rkey);
         this.log('info', `position reversed: now ${newPos.side} ${newPos.qty} ${newPos.symbol}`);
         await this.applyProtection(adapter, newPos);
         this.changed();
       }
     }
+  }
+
+  /** Build a fresh managed-position record (unsaved). */
+  private newManagedPosition(fields: {
+    accountId: string;
+    market: MarketType;
+    symbol: string;
+    side: PositionDir;
+    qty: number;
+    entryPrice: number;
+    leverage: number;
+    marginMode: 'cross' | 'isolated';
+    hookId?: string;
+    config: ManagedPosition['config'];
+    entryOrderIds?: string[];
+  }): ManagedPosition {
+    return {
+      id: randomUUID(),
+      ...fields,
+      openedAt: Date.now(),
+      status: 'open',
+      realizedPnl: 0,
+      dcaCount: 0,
+      tpOrderIds: [],
+      tpFilledCount: 0,
+    };
   }
 
   private createPosition(
@@ -751,8 +810,7 @@ export class TradingEngine extends EventEmitter {
     fill: FillEvent,
     intent: PendingIntent,
   ): ManagedPosition {
-    const pos: ManagedPosition = {
-      id: randomUUID(),
+    const pos = this.newManagedPosition({
       accountId,
       market,
       symbol: fill.symbol,
@@ -762,17 +820,102 @@ export class TradingEngine extends EventEmitter {
       leverage: intent.leverage,
       marginMode: intent.marginMode,
       hookId: intent.hookId,
-      openedAt: Date.now(),
-      status: 'open',
-      realizedPnl: 0,
-      dcaCount: 0,
-      tpOrderIds: [],
-      tpFilledCount: 0,
       config: intent.config,
       entryOrderIds: intent.entryOrderIds?.filter((id) => id !== fill.orderId),
-    };
+    });
     this.db.upsertPosition(pos);
     return pos;
+  }
+
+  /**
+   * Attach (or replace) a TP grid + SL on a position that already exists on the
+   * exchange — including one opened before the terminal, or before this fix,
+   * that shows as "not managed". Creates the managed record from the live
+   * exchange position when needed, then places the protective orders.
+   */
+  async manageExistingPosition(input: {
+    accountId: string;
+    market: MarketType;
+    symbol: string;
+    side?: PositionDir;
+    tp?: ManagedPosition['config']['tp'];
+    sl?: ManagedPosition['config']['sl'];
+    slx?: ManagedPosition['config']['slx'];
+  }): Promise<string> {
+    const adapter = await this.adapter(input.accountId, input.market);
+    const info = await adapter.symbolInfo(input.symbol);
+    if (!info) throw new Error(`Unknown symbol ${input.symbol}`);
+    if (input.market !== 'futures') throw new Error('Managing a position requires a futures market');
+    const hedge = this.isHedge(input.accountId, input.market);
+    const positions = await adapter.getPositions();
+    const matches = positions.filter(
+      (p) =>
+        p.symbol === input.symbol &&
+        Math.abs(p.qty) > 1e-12 &&
+        (input.side
+          ? hedge
+            ? p.positionSide === (input.side === 'long' ? 'LONG' : 'SHORT')
+            : (p.qty > 0) === (input.side === 'long')
+          : true),
+    );
+    if (matches.length === 0) throw new Error(`No open ${input.symbol} position to manage`);
+    if (matches.length > 1) throw new Error(`Multiple ${input.symbol} positions — specify a side`);
+    const exPos = matches[0];
+    const dir: PositionDir = hedge
+      ? exPos.positionSide === 'SHORT'
+        ? 'short'
+        : 'long'
+      : exPos.qty > 0
+        ? 'long'
+        : 'short';
+    const config: ManagedPosition['config'] = {
+      tp: input.tp ?? { ...defaultTpModule(), enabled: false },
+      sl: input.sl ?? { ...defaultSlModule(), enabled: false },
+      slx: input.slx ?? { ...defaultSlxModule(), enabled: false },
+    };
+
+    const qk = this.key(input.accountId, input.market, input.symbol);
+    const prev = this.fillQueues.get(qk) ?? Promise.resolve();
+    let detail = '';
+    const next = prev
+      .then(async () => {
+        let pos = this.db.openPositionFor(input.accountId, input.market, input.symbol, hedge ? dir : undefined);
+        if (pos) {
+          // Already managed: swap in the new protection and re-sync size.
+          pos.config = config;
+          pos.qty = Math.abs(exPos.qty);
+          pos.entryPrice = exPos.entryPrice;
+          pos.trailing = undefined;
+          this.db.upsertPosition(pos);
+          await this.applyProtection(adapter, pos);
+          detail = `updated protection for ${pos.side} ${pos.symbol}`;
+        } else {
+          pos = this.newManagedPosition({
+            accountId: input.accountId,
+            market: input.market,
+            symbol: input.symbol,
+            side: dir,
+            qty: Math.abs(exPos.qty),
+            entryPrice: exPos.entryPrice,
+            leverage: exPos.leverage || 1,
+            marginMode: exPos.marginMode,
+            config,
+          });
+          this.db.upsertPosition(pos);
+          this.dropIntent(this.intentKey(input.accountId, input.market, input.symbol, dir));
+          adapter.watchPrice(pos.symbol);
+          await this.applyProtection(adapter, pos);
+          detail = `now managing ${pos.side} ${pos.qty} ${pos.symbol}`;
+        }
+        this.changed();
+      })
+      .catch((e) => {
+        detail = `error: ${e instanceof Error ? e.message : String(e)}`;
+        throw e;
+      });
+    this.fillQueues.set(qk, next);
+    await next;
+    return detail;
   }
 
   /** Place/replace TP grid and SL for a position. */
@@ -937,6 +1080,133 @@ export class TradingEngine extends EventEmitter {
   }
 
   // ------------------------------------------------------------------
+  // Reconciliation: adopt filled positions whose fill event was missed
+  // ------------------------------------------------------------------
+
+  /** Poll open positions on a timer and place protection for any intent whose
+   *  fill was never observed (dropped user-data event, restart mid-fill). */
+  startBackgroundReconcile(intervalMs = 15_000): void {
+    if (this.reconcileTimer) return;
+    this.reconcileTimer = setInterval(() => void this.reconcileAll(), intervalMs);
+    this.reconcileTimer.unref?.();
+  }
+
+  private async reconcileAll(): Promise<void> {
+    const seen = new Set<string>();
+    for (const intent of [...this.intents.values()]) {
+      const k = `${intent.accountId}:${intent.market}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      await this.reconcile(intent.accountId, intent.market).catch((e) =>
+        this.log('error', `reconcile failed: ${e}`),
+      );
+    }
+  }
+
+  /** One-off reconcile shortly after placing an opening order, to catch a
+   *  marketable fill whose user-data event arrives late or never. */
+  private scheduleReconcile(accountId: string, market: MarketType, delayMs = 4_000): void {
+    const t = setTimeout(() => void this.reconcile(accountId, market).catch(() => {}), delayMs);
+    t.unref?.();
+  }
+
+  /**
+   * Compare exchange positions with pending intents. For any position an intent
+   * opened that isn't yet managed by the terminal, adopt it and place TP/SL —
+   * this is the safety net when the real-time fill event is missed. Very old
+   * intents with no matching position are dropped.
+   */
+  async reconcile(accountId: string, market: MarketType, knownPositions?: ExchangePosition[]): Promise<void> {
+    const pending = [...this.intents.entries()].filter(([, i]) => i.accountId === accountId && i.market === market);
+    if (pending.length === 0) return;
+    let adapter: ExchangeAdapter;
+    try {
+      adapter = await this.adapter(accountId, market);
+    } catch {
+      return;
+    }
+    let positions = knownPositions;
+    if (!positions) {
+      try {
+        positions = await adapter.getPositions();
+      } catch {
+        return;
+      }
+    }
+    const hedge = this.isHedge(accountId, market);
+    const now = Date.now();
+    for (const [key, intent] of pending) {
+      const want = intent.dir === 'long' ? 'LONG' : 'SHORT';
+      const exPos = positions.find(
+        (p) =>
+          p.symbol === intent.symbol &&
+          Math.abs(p.qty) > 1e-12 &&
+          (hedge ? p.positionSide === want : (p.qty > 0) === (intent.dir === 'long')),
+      );
+      if (!exPos) {
+        // Nothing has filled yet; drop only long-stale intents to avoid leaks.
+        if (now - intent.createdAt > INTENT_TTL_MS) this.dropIntent(key);
+        continue;
+      }
+      if (this.db.openPositionFor(accountId, market, intent.symbol, hedge ? intent.dir : undefined)) {
+        this.dropIntent(key); // a real fill already created the managed position
+        continue;
+      }
+      await this.adoptPosition(adapter, key, intent, exPos);
+    }
+  }
+
+  /** Build a managed position from an exchange position and place its
+   *  protection, serialized with live fills for that symbol. */
+  private async adoptPosition(
+    adapter: ExchangeAdapter,
+    key: string,
+    intent: PendingIntent,
+    exPos: ExchangePosition,
+  ): Promise<void> {
+    const qk = this.key(intent.accountId, intent.market, intent.symbol);
+    const prev = this.fillQueues.get(qk) ?? Promise.resolve();
+    const next = prev
+      .then(async () => {
+        const hedge = this.isHedge(intent.accountId, intent.market);
+        // Re-check under the per-symbol lock: a real fill may have won the race.
+        if (!this.intents.has(key)) return;
+        if (this.db.openPositionFor(intent.accountId, intent.market, intent.symbol, hedge ? intent.dir : undefined)) {
+          this.dropIntent(key);
+          return;
+        }
+        const openOrders = await adapter.getOpenOrders(intent.symbol).catch(() => []);
+        const openIds = new Set(openOrders.map((o) => o.orderId));
+        const entryOrderIds = (intent.entryOrderIds ?? []).filter((id) => openIds.has(id));
+        const pos = this.newManagedPosition({
+          accountId: intent.accountId,
+          market: intent.market,
+          symbol: intent.symbol,
+          side: intent.dir,
+          qty: Math.abs(exPos.qty),
+          entryPrice: exPos.entryPrice,
+          leverage: intent.leverage,
+          marginMode: intent.marginMode,
+          hookId: intent.hookId,
+          config: intent.config,
+          entryOrderIds: entryOrderIds.length ? entryOrderIds : undefined,
+        });
+        this.db.upsertPosition(pos);
+        this.dropIntent(key);
+        this.log(
+          'info',
+          `reconcile: adopted unmanaged ${pos.side} ${pos.qty} ${pos.symbol} @ ${pos.entryPrice}; placing protection`,
+        );
+        adapter.watchPrice(pos.symbol);
+        await this.applyProtection(adapter, pos);
+        this.changed();
+      })
+      .catch((e) => this.log('error', `reconcile adopt failed: ${e}`));
+    this.fillQueues.set(qk, next);
+    await next;
+  }
+
+  // ------------------------------------------------------------------
   // Price ticks → trailing stop + virtual orders
   // ------------------------------------------------------------------
 
@@ -1058,6 +1328,10 @@ export class TradingEngine extends EventEmitter {
   }
 
   async shutdown(): Promise<void> {
+    if (this.reconcileTimer) {
+      clearInterval(this.reconcileTimer);
+      this.reconcileTimer = null;
+    }
     await this.settle().catch(() => {});
     for (const a of this.adapters.values()) await a.close().catch(() => {});
     this.db.flush();
