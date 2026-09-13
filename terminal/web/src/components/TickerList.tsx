@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useStore } from '../store';
 
-export function TickerList() {
+export function TickerList({ onPick }: { onPick?: () => void } = {}) {
   const { tickers, symbol, setSymbol, prices } = useStore();
   const [query, setQuery] = useState('');
 
@@ -30,7 +30,10 @@ export function TickerList() {
           {rows.map((t) => (
             <tr
               key={t.symbol}
-              onClick={() => setSymbol(t.symbol)}
+              onClick={() => {
+                setSymbol(t.symbol);
+                onPick?.();
+              }}
               style={{ cursor: 'pointer', background: t.symbol === symbol ? 'rgba(79,140,201,0.12)' : undefined }}
             >
               <td>{t.symbol.replace('USDT', '')}<span className="dim">/USDT</span></td>
