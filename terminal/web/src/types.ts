@@ -81,6 +81,7 @@ export interface Hook {
     price: number;
     orderType: string;
     reorderAfterDca: boolean;
+    breakevenAfterTp: number;
     trigger?: 'price' | 'candle';
     candleTf?: string;
   };
@@ -88,7 +89,6 @@ export interface Hook {
     enabled: boolean;
     activationOfsPct: number;
     trailPct: number;
-    breakevenAfterTp: number;
     trigger?: 'price' | 'candle';
     candleTf?: string;
   };

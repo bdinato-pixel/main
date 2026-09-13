@@ -132,6 +132,13 @@ export interface SlModule {
   /** Recompute SL from the new average price after DCA. */
   reorderAfterDca: boolean;
   /**
+   * Move the stop to the position's break-even (average entry) price once
+   * this many TP orders have filled (0 = off). Independent of the trailing
+   * module — it works whether or not SLX is enabled, and places a stop at
+   * breakeven even if no initial SL was set.
+   */
+  breakevenAfterTp: number;
+  /**
    * Trigger source (Finandy): 'price' fires on touch (exchange-resident stop
    * on futures); 'candle' fires only when a candle of candleTf CLOSES beyond
    * the SL level — wick-tolerant, evaluated server-side.
@@ -147,8 +154,6 @@ export interface SlxModule {
   activationOfsPct: number;
   /** Distance % the stop trails behind the best price seen. */
   trailPct: number;
-  /** Move SL to breakeven once this many TP orders filled (0 = off). */
-  breakevenAfterTp: number;
   /** 'price' = arm/trail/trigger on every tick; 'candle' = on candle closes. */
   trigger?: 'price' | 'candle';
   candleTf?: string;

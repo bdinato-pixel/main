@@ -67,6 +67,7 @@ export function defaultSlModule(): SlModule {
     price: 0,
     orderType: 'stop_market',
     reorderAfterDca: true,
+    breakevenAfterTp: 0,
     trigger: 'price',
     candleTf: '1m',
   };
@@ -77,7 +78,6 @@ export function defaultSlxModule(): SlxModule {
     enabled: false,
     activationOfsPct: 1,
     trailPct: 0.5,
-    breakevenAfterTp: 0,
     trigger: 'price',
     candleTf: '1m',
   };

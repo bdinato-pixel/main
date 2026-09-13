@@ -482,6 +482,17 @@ function HookEditor({ hook }: { hook: Hook }) {
           </label>
         </div>
         <div className="row">
+          <label title="Move the stop to break-even (entry) once this many TPs fill. Works even with SL and Trailing off (0 = off).">
+            Move to breakeven after TP#
+          </label>
+          <input
+            type="number"
+            min={0}
+            value={draft.sl.breakevenAfterTp}
+            onChange={(e) => patch((d) => (d.sl.breakevenAfterTp = Number(e.target.value)))}
+          />
+        </div>
+        <div className="row">
           <label>
             <input type="checkbox" checked={draft.slx.enabled} onChange={(e) => patch((d) => (d.slx.enabled = e.target.checked))} /> SLX
           </label>
@@ -493,12 +504,6 @@ function HookEditor({ hook }: { hook: Hook }) {
           />
           <label>trail %</label>
           <input type="number" value={draft.slx.trailPct} onChange={(e) => patch((d) => (d.slx.trailPct = Number(e.target.value)))} />
-          <label>BE after TP#</label>
-          <input
-            type="number"
-            value={draft.slx.breakevenAfterTp}
-            onChange={(e) => patch((d) => (d.slx.breakevenAfterTp = Number(e.target.value)))}
-          />
           <label>Trigger</label>
           <TriggerSelect
             trigger={draft.slx.trigger}

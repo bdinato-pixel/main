@@ -163,7 +163,7 @@ test('SL price from % offset and from absolute price', () => {
 // -------------------------------------------------------------- trailing
 
 test('trailing stop arms, trails and triggers', () => {
-  const slx = { enabled: true, activationOfsPct: 1, trailPct: 0.5, breakevenAfterTp: 0 };
+  const slx = { enabled: true, activationOfsPct: 1, trailPct: 0.5 };
   // Not armed below activation.
   let s = updateTrailing(slx, 'long', 100, undefined, 100.5);
   assert.equal(s.armed, false);

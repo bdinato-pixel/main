@@ -58,9 +58,14 @@ terminal/
   futures) or **candle close** on a chosen timeframe — the SL fires only if
   the candle closes beyond the level, so wicks and stop-hunts through it
   don't knock you out
+- **Move stop to breakeven after N TPs**: once the chosen number of TP orders
+  fill, the stop is moved to the position's average entry price. It's a
+  stop-loss setting, independent of the trailing module — it works with SL
+  and trailing both off, and will place a stop at breakeven even if no
+  initial SL was set
 - **Trailing stop (SLX)**: arms at an activation profit %, trails the best
-  price, optional move-SL-to-breakeven after N TP fills; also supports the
-  candle-close trigger (arms/trails/fires on closes instead of ticks)
+  price; also supports the candle-close trigger (arms/trails/fires on closes
+  instead of ticks)
 - Entry and DCA order grids per hook (same grid engine as manual trading)
 - Hedge-mode hooks: Long-only / Short-only / Strategy hooks manage their own
   side of a dual position; a "Both" hook opens each side independently

@@ -29,10 +29,10 @@ export function OrderPanel() {
   const [slOfs, setSlOfs] = useState(3);
   const [slPrice, setSlPrice] = useState('');
   const [slTrig, setSlTrig] = useState('price'); // 'price' or a candle timeframe
+  const [beTp, setBeTp] = useState(0); // move stop to breakeven after this many TPs (0 = off)
   const [slxOn, setSlxOn] = useState(false);
   const [slxAct, setSlxAct] = useState(1);
   const [slxTrail, setSlxTrail] = useState(0.5);
-  const [slxBe, setSlxBe] = useState(0);
   const [slxTrig, setSlxTrig] = useState('price');
 
   const lastPrice = prices[symbol] ?? tickers.find((t) => t.symbol === symbol)?.last ?? 0;
@@ -67,13 +67,16 @@ export function OrderPanel() {
         tp: tpOn
           ? { enabled: true, orderType: 'limit', orders: tpOrders, reorderLevels: true, updateBySignal: false }
           : undefined,
-        sl: slOn
+        // Send the SL block when the SL module is on OR breakeven-after-TP is
+        // set (breakeven works independently of an initial stop).
+        sl: slOn || beTp > 0
           ? {
-              enabled: true,
+              enabled: slOn,
               ofsPct: slOfs,
               price: Number(slPrice) || 0,
               orderType: 'stop_market',
               reorderAfterDca: true,
+              breakevenAfterTp: beTp,
               trigger: slTrig === 'price' ? 'price' : 'candle',
               candleTf: slTrig === 'price' ? '1m' : slTrig,
             }
@@ -83,7 +86,6 @@ export function OrderPanel() {
               enabled: true,
               activationOfsPct: slxAct,
               trailPct: slxTrail,
-              breakevenAfterTp: slxBe,
               trigger: slxTrig === 'price' ? 'price' : 'candle',
               candleTf: slxTrig === 'price' ? '1m' : slxTrig,
             }
@@ -254,6 +256,15 @@ export function OrderPanel() {
             </select>
           </div>
         )}
+        <div className="row">
+          <label title="Move the stop to break-even (entry) after this many TPs fill. Works even with SL and Trailing off (0 = off).">
+            Breakeven after TP#
+          </label>
+          <input type="number" min={0} value={beTp} onChange={(e) => setBeTp(Number(e.target.value))} />
+          <span className="dim" style={{ fontSize: 12 }}>
+            0 = off
+          </span>
+        </div>
       </div>
 
       <div className="module">
@@ -269,10 +280,6 @@ export function OrderPanel() {
             <div className="row">
               <label>Trail %</label>
               <input type="number" value={slxTrail} onChange={(e) => setSlxTrail(Number(e.target.value))} />
-            </div>
-            <div className="row">
-              <label>BE after TP#</label>
-              <input type="number" value={slxBe} onChange={(e) => setSlxBe(Number(e.target.value))} />
             </div>
             <div className="row">
               <label>Trigger</label>
