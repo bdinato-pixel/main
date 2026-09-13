@@ -4,12 +4,13 @@ import { useStore } from '../store';
 import type { GridConfig, TpOrderSpec } from '../types';
 import { DEFAULT_GRID, GridFields, gridPreviewPrices } from './GridFields';
 import { NumberInput } from './NumberInput';
+import { parseSignal, type ParsedSignal } from '../signalParse';
 
 type SizeUnit = 'usd' | 'base' | 'freePct' | 'fullPct' | 'fullPctLev';
 const CANDLE_TFS = ['1m', '3m', '5m', '15m', '1h', '4h', '1d', '1w'];
 
 export function OrderPanel() {
-  const { market, symbol, prices, tickers, balances, positions, setError, loadAccountState } = useStore();
+  const { market, symbol, prices, tickers, balances, positions, setSymbol, setError, loadAccountState } = useStore();
   const account = useStore((s) => s.account());
 
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
@@ -36,6 +37,11 @@ export function OrderPanel() {
   const [slxAct, setSlxAct] = useState(1);
   const [slxTrail, setSlxTrail] = useState(0.5);
   const [slxTrig, setSlxTrig] = useState('price');
+
+  // Paste-a-signal importer.
+  const [signalOpen, setSignalOpen] = useState(false);
+  const [signalText, setSignalText] = useState('');
+  const [parsed, setParsed] = useState<ParsedSignal | null>(null);
 
   const lastPrice = prices[symbol] ?? tickers.find((t) => t.symbol === symbol)?.last ?? 0;
   const quoteFree = balances.find((b) => b.asset === 'USDT')?.free ?? 0;
@@ -119,6 +125,32 @@ export function OrderPanel() {
     return ((equity * size) / 100) * lev / ref;
   }, [size, sizeUnit, lastPrice, limitPrice, type, gridOn, quoteFree, equity, leverage, market]);
 
+  // Apply a parsed signal to the form (never auto-submits — user reviews & fires).
+  const applySignal = (p: ParsedSignal) => {
+    if (p.symbol && p.symbol !== symbol) setSymbol(p.symbol);
+    if (p.side) setSide(p.side);
+    if (p.entries.length >= 2) {
+      setGridOn(true);
+      setGrid({ ...DEFAULT_GRID, count: p.entries.length, priceMode: 'levels', levels: p.entries.map((price) => ({ price })) });
+    } else if (p.entries.length === 1) {
+      setGridOn(false);
+      setType('limit');
+      setLimitPrice(p.entries[0]);
+    }
+    if (p.tps.length) {
+      setTpOn(true);
+      const n = p.tps.length;
+      const even = Math.floor(100 / n);
+      setTpOrders(p.tps.map((price, i) => ({ ofsPct: 0, price, piecePct: i === n - 1 ? 100 - even * (n - 1) : even })));
+    }
+    if (p.sl) {
+      setSlOn(true);
+      setSlPrice(p.sl.price);
+      setSlTrig(p.sl.trigger === 'candle' && p.sl.candleTf ? p.sl.candleTf : 'price');
+    }
+    setSignalOpen(false);
+  };
+
   const submit = async () => {
     setBusy(true);
     try {
@@ -181,8 +213,14 @@ export function OrderPanel() {
   };
 
   return (
+    <>
     <div className="order-panel">
-      <div className="panel-title">Create order — {symbol}</div>
+      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <div className="panel-title" style={{ padding: 0 }}>Create order — {symbol}</div>
+        <button className="ghost" style={{ fontSize: 12 }} onClick={() => { setParsed(null); setSignalOpen(true); }}>
+          ⇩ Paste signal
+        </button>
+      </div>
       <div className="side-toggle">
         <button className={`buy ${side === 'buy' ? 'selected' : ''}`} onClick={() => setSide('buy')}>
           Buy / Long
@@ -357,5 +395,55 @@ export function OrderPanel() {
         {busy ? '…' : `${side === 'buy' ? 'Buy / Long' : 'Sell / Short'} ${symbol.replace('USDT', '')}`}
       </button>
     </div>
+
+    {signalOpen && (
+      <div className="modal-overlay" onClick={() => setSignalOpen(false)}>
+        <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="panel-title" style={{ padding: 0 }}>Paste signal</div>
+          <div className="dim" style={{ fontSize: 12 }}>
+            Paste a call (Discord/Telegram). It fills the order form below — review, then place it.
+          </div>
+          <textarea
+            rows={8}
+            style={{ width: '100%' }}
+            placeholder={'e.g.\n$API3USDT LONG\nEntry: LIMIT PRICE ($0.2453)\nStoploss: 4H CLOSE BELOW $0.2259\nDCA: $0.2318\nTARGET: $0.3547'}
+            value={signalText}
+            onChange={(e) => {
+              setSignalText(e.target.value);
+              setParsed(null);
+            }}
+          />
+          <div className="row" style={{ justifyContent: 'flex-end' }}>
+            <button className="ghost" onClick={() => setParsed(parseSignal(signalText))}>Parse</button>
+          </div>
+          {parsed && (
+            <div className="module" style={{ gap: 4 }}>
+              <div>
+                <span className="dim">Symbol</span> {parsed.symbol ?? '—'} ·{' '}
+                <span className={parsed.side === 'buy' ? 'pos' : parsed.side === 'sell' ? 'neg' : 'dim'}>
+                  {parsed.side ?? '—'}
+                </span>
+              </div>
+              <div className="mono"><span className="dim">Entries </span>{parsed.entries.join(', ') || '—'}</div>
+              <div className="mono"><span className="dim">TP </span>{parsed.tps.join(', ') || '—'}</div>
+              <div className="mono">
+                <span className="dim">SL </span>
+                {parsed.sl ? `${parsed.sl.price}${parsed.sl.trigger === 'candle' ? ` (${parsed.sl.candleTf} close)` : ''}` : '—'}
+              </div>
+              {parsed.warnings.map((w, i) => (
+                <div key={i} className="dim" style={{ fontSize: 12 }}>⚠ {w}</div>
+              ))}
+            </div>
+          )}
+          <div className="row" style={{ justifyContent: 'flex-end' }}>
+            <button className="ghost" onClick={() => setSignalOpen(false)}>Cancel</button>
+            <button className="primary" disabled={!parsed} onClick={() => parsed && applySignal(parsed)}>
+              Apply to order
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
