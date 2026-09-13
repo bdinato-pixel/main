@@ -37,6 +37,8 @@ export function Chart() {
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const linesRef = useRef<IPriceLine[]>([]);
   const lastBarRef = useRef<Bar | null>(null);
+  // Preview lines the user can drag: {kind, index, current price}.
+  const draggablesRef = useRef<{ kind: 'entry' | 'tp' | 'sl'; index: number; price: number }[]>([]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -174,13 +176,106 @@ export function Chart() {
     }
 
     // 3. Live preview of the order being built (dotted, marked with •).
+    // Draggable lines are collected for the pointer handlers below.
+    const drags: { kind: 'entry' | 'tp' | 'sl'; index: number; price: number }[] = [];
     if (preview && preview.symbol === symbol && preview.market === market) {
       const entryColor = preview.side === 'buy' ? '#4f8cc9' : '#b06fd6';
-      for (const p of preview.entries) mk(p, entryColor, 'entry •', LineStyle.Dotted);
-      for (const [i, p] of preview.tps.entries()) mk(p, '#26a69a', `TP${i + 1} •`, LineStyle.Dotted);
-      if (preview.sl) mk(preview.sl, '#ef5350', 'SL •', LineStyle.Dotted);
+      for (const [i, p] of preview.entries.entries()) {
+        mk(p, entryColor, 'entry •', LineStyle.Dotted);
+        if (preview.entriesDraggable) drags.push({ kind: 'entry', index: i, price: p });
+      }
+      for (const [i, p] of preview.tps.entries()) {
+        mk(p, '#26a69a', `TP${i + 1} •`, LineStyle.Dotted);
+        drags.push({ kind: 'tp', index: i, price: p });
+      }
+      if (preview.sl) {
+        mk(preview.sl, '#ef5350', 'SL •', LineStyle.Dotted);
+        drags.push({ kind: 'sl', index: 0, price: preview.sl });
+      }
     }
+    draggablesRef.current = drags;
   }, [managed, orders, preview, symbol, market]);
+
+  // Drag preview lines up/down to set entry / TP / SL prices directly on the
+  // chart. lightweight-charts has no native draggable lines, so this hit-tests
+  // pointer y against each line's coordinate and writes the new price back to
+  // the order panel via the store.
+  useEffect(() => {
+    const el = containerRef.current;
+    const series = seriesRef.current;
+    if (!el || !series) return;
+    let drag: { kind: 'entry' | 'tp' | 'sl'; index: number } | null = null;
+
+    const hit = (y: number) => {
+      let best: (typeof draggablesRef.current)[number] | null = null;
+      let bestDist = 7;
+      for (const d of draggablesRef.current) {
+        const cy = series.priceToCoordinate(d.price);
+        if (cy == null) continue;
+        const dist = Math.abs(cy - y);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = d;
+        }
+      }
+      return best;
+    };
+
+    const onDown = (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      const rect = el.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      if (x > rect.width - 56) return; // over the price axis
+      const h = hit(y);
+      if (!h) return;
+      // Blur any focused panel input so it re-syncs to the dragged value
+      // (NumberInput keeps its own text while focused).
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      drag = { kind: h.kind, index: h.index };
+      el.setPointerCapture(e.pointerId);
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    const onMove = (e: PointerEvent) => {
+      const rect = el.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      if (drag) {
+        const raw = series.coordinateToPrice(y);
+        if (raw != null && raw > 0) {
+          const st = useStore.getState();
+          const tick = st.symbols.find((s) => s.symbol === st.symbol)?.tickSize ?? 0;
+          const price = tick > 0 ? Number((Math.round(raw / tick) * tick).toFixed(decimalsFromTick(tick))) : raw;
+          st.applyPreviewDrag?.({ kind: drag.kind, index: drag.index, price });
+        }
+        e.preventDefault();
+        e.stopPropagation();
+      } else {
+        el.style.cursor = hit(y) ? 'ns-resize' : 'default';
+      }
+    };
+
+    const onUp = (e: PointerEvent) => {
+      if (drag) {
+        drag = null;
+        try {
+          el.releasePointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+
+    el.addEventListener('pointerdown', onDown, true);
+    el.addEventListener('pointermove', onMove, true);
+    window.addEventListener('pointerup', onUp, true);
+    return () => {
+      el.removeEventListener('pointerdown', onDown, true);
+      el.removeEventListener('pointermove', onMove, true);
+      window.removeEventListener('pointerup', onUp, true);
+    };
+  }, []);
 
   const priceDecimals = decimalsFromTick(info?.tickSize);
 

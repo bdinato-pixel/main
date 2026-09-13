@@ -40,8 +40,37 @@ export function OrderPanel() {
   const lastPrice = prices[symbol] ?? tickers.find((t) => t.symbol === symbol)?.last ?? 0;
   const quoteFree = balances.find((b) => b.asset === 'USDT')?.free ?? 0;
   const setPreview = useStore((s) => s.setPreview);
+  const setApplyPreviewDrag = useStore((s) => s.setApplyPreviewDrag);
   const setTp = (i: number, patch: Partial<TpOrderSpec>) =>
     setTpOrders((prev) => prev.map((o, j) => (j === i ? { ...o, ...patch } : o)));
+
+  // Let the chart apply drags of preview lines back to these inputs.
+  useEffect(() => {
+    setApplyPreviewDrag((e) => {
+      if (e.kind === 'sl') {
+        setSlPrice(e.price);
+        return;
+      }
+      if (e.kind === 'tp') {
+        setTpOrders((prev) => prev.map((o, i) => (i === e.index ? { ...o, price: e.price } : o)));
+        return;
+      }
+      // entry
+      if (gridOn) {
+        setGrid((prev) => {
+          const n = Math.max(2, Math.min(30, Math.round(prev.count || 2)));
+          const levels = Array.from({ length: n }, (_, i) => prev.levels?.[i] ?? { price: 0 });
+          if (e.index < levels.length) levels[e.index] = { ...levels[e.index], price: e.price };
+          return { ...prev, priceMode: 'levels', levels };
+        });
+      } else if (type === 'limit') {
+        setLimitPrice(e.price);
+      } else if (type === 'stop_market') {
+        setStopPrice(e.price);
+      }
+    });
+    return () => setApplyPreviewDrag(null);
+  }, [gridOn, type, setApplyPreviewDrag]);
 
   // Live preview of the order being configured, drawn on the chart in realtime.
   useEffect(() => {
@@ -65,7 +94,8 @@ export function OrderPanel() {
           : entryRef * (1 - (dir * slOfs) / 100)
         : undefined;
 
-    setPreview({ symbol, market, side, entries, tps, sl });
+    const entriesDraggable = gridOn ? (grid.priceMode ?? 'offset') === 'levels' : type === 'limit' || type === 'stop_market';
+    setPreview({ symbol, market, side, entries, entriesDraggable, tps, sl });
     return () => setPreview(null);
   }, [
     symbol, market, side, type, gridOn, grid, limitPrice, stopPrice,

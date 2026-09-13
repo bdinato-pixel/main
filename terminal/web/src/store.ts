@@ -8,6 +8,7 @@ import type {
   MarketType,
   OpenOrder,
   OrderPreview,
+  PreviewDrag,
   Settings,
   SignalLogEntry,
   SymbolInfo,
@@ -29,6 +30,8 @@ interface AppState {
   signals: SignalLogEntry[];
   prices: Record<string, number>;
   preview: OrderPreview | null;
+  /** Set by the order panel so the chart can apply drags back to its inputs. */
+  applyPreviewDrag: ((e: PreviewDrag) => void) | null;
   error: string | null;
 
   account: () => string;
@@ -38,6 +41,7 @@ interface AppState {
   setError: (e: string | null) => void;
   setPrice: (symbol: string, price: number) => void;
   setPreview: (p: OrderPreview | null) => void;
+  setApplyPreviewDrag: (fn: ((e: PreviewDrag) => void) | null) => void;
   loadStatic: () => Promise<void>;
   loadAccountState: () => Promise<void>;
   loadHooks: () => Promise<void>;
@@ -60,6 +64,7 @@ export const useStore = create<AppState>((set, get) => ({
   signals: [],
   prices: {},
   preview: null,
+  applyPreviewDrag: null,
   error: null,
 
   account: () => get().settings?.activeAccountId ?? 'paper',
@@ -73,6 +78,7 @@ export const useStore = create<AppState>((set, get) => ({
   setError: (error) => set({ error }),
   setPrice: (symbol, price) => set((s) => ({ prices: { ...s.prices, [symbol]: price } })),
   setPreview: (preview) => set({ preview }),
+  setApplyPreviewDrag: (applyPreviewDrag) => set({ applyPreviewDrag }),
 
   loadStatic: async () => {
     try {
