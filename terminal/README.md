@@ -154,6 +154,41 @@ prefer NSSM for that.)
 **Linux/macOS — systemd/launchd** work the same way: run `node dist/index.js`
 with the working directory set to `terminal/server`.
 
+## Access it from your phone (Tailscale)
+
+[Tailscale](https://tailscale.com) puts your PC and phone on one private network
+so you can reach the terminal from anywhere — without exposing it to the public
+internet or forwarding ports.
+
+One time:
+
+1. Install Tailscale and sign in on **both** the PC and your phone (same
+   account). Windows installer: <https://tailscale.com/download/windows>.
+2. Enable **MagicDNS** and **HTTPS Certificates** for your tailnet in the admin
+   console: <https://login.tailscale.com/admin/dns>.
+
+Then, on the PC, run the bundled script (Administrator PowerShell):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File terminal\scripts\tailscale-access.ps1
+```
+
+It uses `tailscale serve` to publish the terminal at
+`https://<your-pc>.<tailnet>.ts.net` — reachable by any device on your tailnet,
+over HTTPS, with **no firewall changes** and nothing exposed publicly. The
+script prints the exact URL; open it in your phone's browser (with the Tailscale
+app connected). Undo with `... tailscale-access.ps1 -Off`.
+
+Equivalent manual command:
+
+```powershell
+tailscale serve --bg 8720          # then: tailscale serve status
+```
+
+Prefer a plain IP instead of Serve? Run the script with `-DirectPort` to open
+`http://<tailscale-ip>:8720` (adds a firewall rule scoped to the Tailscale
+interface). Keep API keys withdrawal-disabled and the machine private regardless.
+
 Open the UI, go to **Settings**, and either stay on the default **paper
 trading** account or add a Binance account with an API key
 (*Enable Reading* + *Enable Spot & Margin Trading* and/or *Enable Futures*;
