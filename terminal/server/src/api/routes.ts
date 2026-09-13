@@ -251,7 +251,25 @@ export function buildRouter(engine: TradingEngine): Router {
       symbol: z.string().min(1),
       side: z.enum(['buy', 'sell']),
       type: z.enum(['market', 'limit', 'stop_market']),
-      qty: z.number().positive(),
+      qty: z.number().positive().optional(),
+      // Size by a Finandy amount mode (e.g. % of portfolio) instead of a fixed
+      // base quantity; resolved server-side against live balances/positions.
+      amount: z
+        .object({
+          mode: z.enum([
+            'amount',
+            'volume',
+            'volume_usd',
+            'full_balance_pct',
+            'full_balance_pct_lev',
+            'free_balance_pct',
+            'free_balance_pct_lev',
+            'position_amount_pct',
+            'position_volume_pct',
+          ]),
+          value: z.number().positive(),
+        })
+        .optional(),
       price: z.number().positive().optional(),
       stopPrice: z.number().positive().optional(),
       reduceOnly: z.boolean().optional(),
@@ -276,6 +294,8 @@ export function buildRouter(engine: TradingEngine): Router {
       tp: z.any().optional(),
       sl: z.any().optional(),
       slx: z.any().optional(),
+    }).refine((d) => d.qty !== undefined || d.amount !== undefined, {
+      message: 'either qty or amount is required',
     });
     const body = schema.safeParse(req.body);
     if (!body.success) return res.status(400).json({ error: body.error.message });

@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../store/db.js';
 import type {
+  AmountSpec,
   Hook,
   ManagedPosition,
   MarketType,
@@ -29,7 +30,10 @@ export interface ManualOrderInput {
   symbol: string;
   side: 'buy' | 'sell';
   type: 'market' | 'limit' | 'stop_market';
-  qty: number;
+  /** Explicit base quantity. Ignored when `amount` is given. */
+  qty?: number;
+  /** Size by a Finandy amount mode (e.g. % of portfolio); overrides qty. */
+  amount?: AmountSpec;
   price?: number;
   stopPrice?: number;
   reduceOnly?: boolean;
@@ -284,18 +288,18 @@ export class TradingEngine extends EventEmitter {
     const balances = await adapter.getBalances();
     const quoteBal = balances.find((b) => b.asset === info.quote);
     const free = quoteBal?.free ?? 0;
-    let positionsVolume = 0;
     let pnl = 0;
     for (const p of await adapter.getPositions()) {
-      positionsVolume += Math.abs(p.qty) * p.entryPrice;
       pnl += p.unrealizedPnl;
     }
+    // Futures: quote free+locked is the wallet balance (margin used is
+    // "locked"); adding uPnL gives account equity. Spot: total quote cash.
     const wallet = balances.reduce((s, b) => s + (b.asset === info.quote ? b.free + b.locked : 0), 0);
     return {
       price: refPrice,
       leverage,
       freeBalance: free,
-      fullBalance: wallet + positionsVolume + pnl,
+      fullBalance: wallet + pnl,
       positionQty: position?.qty,
       positionEntryPrice: position?.entryPrice,
     };
@@ -587,11 +591,22 @@ export class TradingEngine extends EventEmitter {
     const info = await adapter.symbolInfo(input.symbol);
     if (!info) throw new Error(`Unknown symbol ${input.symbol}`);
     const price = input.price ?? (await adapter.getPrice(input.symbol));
-    const q = quantizeOrder(info, input.qty, price);
-    if (!q) throw new Error(`Quantity ${input.qty} is below the exchange minimum`);
 
     const dir: PositionDir = input.side === 'buy' ? 'long' : 'short';
     const hedge = this.isHedge(input.accountId, input.market);
+
+    // Resolve the size. `amount` (e.g. % of portfolio) is computed server-side
+    // against live balances/positions so it's authoritative; otherwise use the
+    // explicit base quantity.
+    let baseQty = input.qty ?? 0;
+    if (input.amount) {
+      const position = this.db.openPositionFor(input.accountId, input.market, input.symbol, hedge ? dir : undefined);
+      const ctx = await this.amountCtx(adapter, info, input.leverage ?? 1, price, position);
+      baseQty = computeBaseQty(input.amount, ctx);
+    }
+    if (!(baseQty > 0)) throw new Error('Order size resolves to zero — check the amount/balance');
+    const q = quantizeOrder(info, baseQty, price);
+    if (!q) throw new Error(`Quantity ${baseQty} is below the exchange minimum`);
     // In hedge mode a reducing buy closes the short side, a reducing sell
     // the long side; opening orders act on their own side.
     const positionSide = hedge
@@ -633,7 +648,7 @@ export class TradingEngine extends EventEmitter {
 
     try {
       if (input.grid && opensPosition) {
-        const levels = planGrid(input.grid, dir, price, input.qty, info);
+        const levels = planGrid(input.grid, dir, price, baseQty, info);
         if (levels.length === 0) throw new Error('No grid orders above the exchange minimums');
         intent!.entryOrderIds = [];
         for (const lvl of levels) {

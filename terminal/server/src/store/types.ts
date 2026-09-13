@@ -11,7 +11,7 @@ export type AmountMode =
   | 'amount' // base-asset quantity (tokens/contracts)
   | 'volume' // quote-asset quantity
   | 'volume_usd' // USD notional
-  | 'full_balance_pct' // % of (wallet + positions volume + PnL)
+  | 'full_balance_pct' // % of account equity (wallet balance + unrealized PnL)
   | 'full_balance_pct_lev' // same, multiplied by leverage
   | 'free_balance_pct' // % of available balance
   | 'free_balance_pct_lev' // same, multiplied by leverage
