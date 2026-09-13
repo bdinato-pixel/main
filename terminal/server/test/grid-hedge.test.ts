@@ -82,6 +82,65 @@ test('planGrid: absolute price mode interpolates between first/last prices', () 
   assert.deepEqual(fallback.map((o) => o.price), [99, 98]);
 });
 
+test('planGrid: explicit per-order prices (levels mode)', () => {
+  // Four exact prices, even split of qty when qtyPct omitted.
+  const even = planGrid(
+    {
+      count: 4,
+      priceMode: 'levels',
+      levels: [{ price: 99 }, { price: 97 }, { price: 95 }, { price: 90 }],
+      firstOfsPct: 0,
+      lastOfsPct: 0,
+      qtyFactor: 1,
+      density: 1,
+    },
+    'long',
+    100,
+    8,
+    INFO,
+  );
+  assert.deepEqual(even.map((o) => o.price), [99, 97, 95, 90]);
+  assert.deepEqual(even.map((o) => o.qty), [2, 2, 2, 2]);
+
+  // Per-order qty %, and blank rows share the remainder evenly.
+  const weighted = planGrid(
+    {
+      count: 3,
+      priceMode: 'levels',
+      levels: [{ price: 100, qtyPct: 50 }, { price: 98 }, { price: 96 }],
+      firstOfsPct: 0,
+      lastOfsPct: 0,
+      qtyFactor: 1,
+      density: 1,
+    },
+    'long',
+    100,
+    10,
+    INFO,
+  );
+  // 50% to level 1, remaining 50% split evenly (25% each).
+  assert.deepEqual(weighted.map((o) => o.price), [100, 98, 96]);
+  assert.deepEqual(weighted.map((o) => o.qty), [5, 2.5, 2.5]);
+
+  // Rows without a price are skipped; sub-minimum orders dropped.
+  const partial = planGrid(
+    {
+      count: 3,
+      priceMode: 'levels',
+      levels: [{ price: 101 }, { price: 0 }, { price: 103 }],
+      firstOfsPct: 0,
+      lastOfsPct: 0,
+      qtyFactor: 1,
+      density: 1,
+    },
+    'short',
+    100,
+    4,
+    INFO,
+  );
+  assert.deepEqual(partial.map((o) => o.price), [101, 103]);
+});
+
 test('planGrid: density shifts spacing; sub-minimum orders are dropped', () => {
   const dense = planGrid({ count: 3, firstOfsPct: 0, lastOfsPct: 4, qtyFactor: 1, density: 2 }, 'long', 100, 3, INFO);
   // density 2 → offsets 0, 4*(0.5)^2 = 1, 4 → prices 100, 99, 96

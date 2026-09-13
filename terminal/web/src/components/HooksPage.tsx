@@ -1,18 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { useStore } from '../store';
-import type { GridConfig, Hook, MarketType } from '../types';
-
-const DEFAULT_GRID: GridConfig = {
-  count: 4,
-  priceMode: 'offset',
-  firstPrice: 0,
-  lastPrice: 0,
-  firstOfsPct: 0.5,
-  lastOfsPct: 3,
-  qtyFactor: 1,
-  density: 1,
-};
+import type { Hook, MarketType } from '../types';
+import { DEFAULT_GRID, GridFields } from './GridFields';
 
 const CANDLE_TFS = ['1m', '3m', '5m', '15m', '30m', '1h', '4h'];
 
@@ -47,45 +37,6 @@ function TriggerSelect({
         </option>
       ))}
     </select>
-  );
-}
-
-function GridFields({ grid, onChange }: { grid: GridConfig; onChange: (g: GridConfig) => void }) {
-  const num = (v: string) => Number(v);
-  const mode = grid.priceMode ?? 'offset';
-  return (
-    <>
-      <div className="row">
-        <label>Orders</label>
-        <input type="number" min={2} max={30} value={grid.count} onChange={(e) => onChange({ ...grid, count: num(e.target.value) })} />
-        <label>Bounds by</label>
-        <select value={mode} onChange={(e) => onChange({ ...grid, priceMode: e.target.value as 'offset' | 'price' })}>
-          <option value="offset">Offset %</option>
-          <option value="price">Price</option>
-        </select>
-        {mode === 'offset' ? (
-          <>
-            <label>First %</label>
-            <input type="number" value={grid.firstOfsPct} onChange={(e) => onChange({ ...grid, firstOfsPct: num(e.target.value) })} />
-            <label>Last %</label>
-            <input type="number" value={grid.lastOfsPct} onChange={(e) => onChange({ ...grid, lastOfsPct: num(e.target.value) })} />
-          </>
-        ) : (
-          <>
-            <label title="Absolute price of the order nearest current price">First price</label>
-            <input type="number" value={grid.firstPrice ?? 0} onChange={(e) => onChange({ ...grid, firstPrice: num(e.target.value) })} />
-            <label title="Absolute price of the farthest order">Last price</label>
-            <input type="number" value={grid.lastPrice ?? 0} onChange={(e) => onChange({ ...grid, lastPrice: num(e.target.value) })} />
-          </>
-        )}
-      </div>
-      <div className="row">
-        <label title="Each next order's quantity is multiplied by this (1 = even)">Qty ×</label>
-        <input type="number" step={0.1} value={grid.qtyFactor} onChange={(e) => onChange({ ...grid, qtyFactor: num(e.target.value) })} />
-        <label title="1 = even spacing, >1 clusters orders toward the far edge, <1 toward the near edge">Density</label>
-        <input type="number" step={0.1} value={grid.density} onChange={(e) => onChange({ ...grid, density: num(e.target.value) })} />
-      </div>
-    </>
   );
 }
 

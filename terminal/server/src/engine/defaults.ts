@@ -6,6 +6,7 @@ export function defaultGridConfig(): GridConfig {
     priceMode: 'offset',
     firstPrice: 0,
     lastPrice: 0,
+    levels: [],
     firstOfsPct: 0.5,
     lastOfsPct: 3,
     qtyFactor: 1,

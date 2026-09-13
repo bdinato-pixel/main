@@ -30,19 +30,30 @@ export type EntryOrderType = 'market' | 'limit' | 'stop_market';
  * orders between `firstOfsPct` and `lastOfsPct` from the reference price
  * (below it for longs, above for shorts).
  */
+/** One explicit grid order (priceMode 'levels'). */
+export interface GridLevel {
+  /** Absolute price of this order. */
+  price: number;
+  /** Optional share of the total quantity (%); blank levels split evenly. */
+  qtyPct?: number;
+}
+
 export interface GridConfig {
   /** Number of orders, 2..30. */
   count: number;
   /**
-   * How the grid bounds are expressed: 'offset' uses first/lastOfsPct as %
-   * from the reference price; 'price' uses first/lastPrice as absolute
-   * exchange prices (Finandy's "First and last Grid price").
+   * How the grid orders are placed:
+   * - 'offset': spread over first/lastOfsPct as % from the reference price;
+   * - 'price':  spread over the absolute first/lastPrice range;
+   * - 'levels': one explicit price per order from `levels` (no interpolation).
    */
-  priceMode?: 'offset' | 'price';
+  priceMode?: 'offset' | 'price' | 'levels';
   /** Absolute price of the order nearest the reference (priceMode 'price'). */
   firstPrice?: number;
   /** Absolute price of the farthest order (priceMode 'price'). */
   lastPrice?: number;
+  /** Explicit per-order prices/quantities (priceMode 'levels'). */
+  levels?: GridLevel[];
   /** Offset % of the order nearest to the reference price. */
   firstOfsPct: number;
   /** Offset % of the farthest order. */

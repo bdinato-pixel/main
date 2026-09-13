@@ -22,10 +22,12 @@ terminal/
 - Candlestick chart (lightweight-charts) with entry / TP / SL / trailing lines
 - Market, limit and stop-market orders; size in USDT, tokens, or % of free
   balance (× leverage on futures)
-- **Order grids**: spread an amount over 2–30 limit orders across a range set
-  either by **% offset** or by an **absolute first/last price**, with a
-  per-order quantity multiplier and a density curve for spacing; unfilled
-  levels are cancelled automatically when the position closes
+- **Order grids**: spread an amount over 2–30 limit orders, placing them by
+  **% offset range**, **absolute first/last price range**, or **each price**
+  (type an exact price per order, with an optional per-order quantity split);
+  range modes also take a per-order quantity multiplier and a density curve
+  for spacing. Unfilled levels are cancelled automatically when the position
+  closes
 - **Absolute price limits everywhere**: TP levels and the Stop Loss take
   either a % offset or an exact price (the price overrides the % when set),
   in both the order panel and the hook editor

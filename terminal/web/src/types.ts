@@ -13,11 +13,17 @@ export interface TpOrderSpec {
   piecePct: number;
 }
 
+export interface GridLevel {
+  price: number;
+  qtyPct?: number;
+}
+
 export interface GridConfig {
   count: number;
-  priceMode?: 'offset' | 'price';
+  priceMode?: 'offset' | 'price' | 'levels';
   firstPrice?: number;
   lastPrice?: number;
+  levels?: GridLevel[];
   firstOfsPct: number;
   lastOfsPct: number;
   qtyFactor: number;
