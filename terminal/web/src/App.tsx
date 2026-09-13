@@ -28,7 +28,7 @@ function useIsMobile(breakpoint = 760): boolean {
 export default function App() {
   const [page, setPage] = useState<Page>('terminal');
   const isMobile = useIsMobile();
-  const { market, setMarket, error, refreshAll, loadAccountState, loadSignals, setPrice } = useStore();
+  const { error, refreshAll, loadAccountState, loadSignals, setPrice } = useStore();
 
   useEffect(() => {
     void refreshAll();
@@ -59,10 +59,7 @@ export default function App() {
         <div className="logo">
           Trade<span>Hook</span>
         </div>
-        <select value={market} onChange={(e) => setMarket(e.target.value as 'spot' | 'futures')}>
-          <option value="futures">USDⓈ-M Futures</option>
-          <option value="spot">Spot</option>
-        </select>
+        <span className="market-label">USDⓈ-M Futures</span>
         <nav>
           {(['terminal', 'hooks', 'settings'] as Page[]).map((p) => (
             <button key={p} className={page === p ? 'active' : ''} onClick={() => setPage(p)}>
