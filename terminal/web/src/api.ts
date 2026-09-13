@@ -55,9 +55,13 @@ export const api = {
   deleteAccount: (id: string) => req(`/api/accounts/${id}`, { method: 'DELETE' }),
 
   accountState: (account: string, market: MarketType) =>
-    req<{ balances: Balance[]; positions: ExchangePosition[]; orders: OpenOrder[]; managed: ManagedPosition[] }>(
-      `/api/account/state?${qs(account, market)}`,
-    ),
+    req<{
+      balances: Balance[];
+      positions: ExchangePosition[];
+      orders: OpenOrder[];
+      managed: ManagedPosition[];
+      warning?: string;
+    }>(`/api/account/state?${qs(account, market)}`),
   symbols: (account: string, market: MarketType) => req<SymbolInfo[]>(`/api/symbols?${qs(account, market)}`),
   tickers: (account: string, market: MarketType) => req<Ticker[]>(`/api/tickers?${qs(account, market)}`),
   klines: (account: string, market: MarketType, symbol: string, interval: string) =>

@@ -96,8 +96,10 @@ export const useStore = create<AppState>((set, get) => ({
   loadAccountState: async () => {
     try {
       const { market } = get();
-      const state = await api.accountState(get().account(), market);
-      set({ ...state, error: null });
+      const { warning, ...state } = await api.accountState(get().account(), market);
+      // Apply whatever loaded (clears stale data from the previous market) and
+      // surface a soft warning if a sub-request failed, instead of erroring out.
+      set({ ...state, error: warning ?? null });
     } catch (e) {
       set({ error: e instanceof Error ? e.message : String(e) });
     }
