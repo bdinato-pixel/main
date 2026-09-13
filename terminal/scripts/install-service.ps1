@@ -169,7 +169,17 @@ Write-Host ''
 if ($svc -and $svc.Status -eq 'Running') {
   Write-Host "Done. '$ServiceName' is running and will start on boot." -ForegroundColor Green
 } else {
-  Write-Warning "Service installed but status is '$($svc.Status)'. Check $serverDir\logs\err.log"
+  # 'Paused' from NSSM means node started then exited (crash-restart throttle).
+  # The usual cause is the port already being held by a manual `npm start`.
+  $busy = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+    Where-Object { $_.OwningProcess -ne $svc.Id } | Select-Object -First 1
+  if ($busy) {
+    $p = Get-Process -Id $busy.OwningProcess -ErrorAction SilentlyContinue
+    Write-Warning "Port $Port is already in use by PID $($busy.OwningProcess) ($($p.ProcessName)) — usually a manual 'npm start'."
+    Write-Host "Fix: Stop-Process -Id $($busy.OwningProcess) -Force ; Restart-Service $ServiceName -Force" -ForegroundColor Yellow
+  } else {
+    Write-Warning "Service installed but status is '$($svc.Status)'. Check $serverDir\logs\err.log"
+  }
 }
 Write-Host "Open the terminal at http://localhost:$Port" -ForegroundColor Green
 Write-Host "Data file: $serverDir\data\terminal.json" -ForegroundColor DarkGray
