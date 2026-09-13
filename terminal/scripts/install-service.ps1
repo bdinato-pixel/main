@@ -21,10 +21,17 @@
 .PARAMETER Uninstall
   Stop and remove the service.
 
+.PARAMETER SpotBase
+  Override the Binance spot REST host (sets BINANCE_SPOT_BASE), e.g.
+  https://api-gcp.binance.com — useful if the default api.binance.com edge
+  blocks signed spot calls for your region. Pass empty to clear it.
+
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\install-service.ps1
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\install-service.ps1 -Update
+.EXAMPLE
+  powershell -ExecutionPolicy Bypass -File .\install-service.ps1 -SpotBase https://api-gcp.binance.com
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\install-service.ps1 -Uninstall
 #>
@@ -32,6 +39,7 @@
 param(
   [string]$ServiceName = 'TradeHook',
   [int]$Port = 8720,
+  [string]$SpotBase = '',
   [switch]$Update,
   [switch]$Uninstall
 )
@@ -126,10 +134,18 @@ function Get-Nssm {
   return $local
 }
 
+# Service environment: PORT plus any overrides (e.g. an alternate spot host).
+$envArgs = @("PORT=$Port")
+if ($SpotBase) { $envArgs += "BINANCE_SPOT_BASE=$SpotBase" }
+
 # --- Update (rebuild + restart) ----------------------------------------------
 if ($Update) {
   Invoke-Build
   $nssm = Get-Nssm
+  if ($SpotBase) {
+    Write-Host "Setting BINANCE_SPOT_BASE=$SpotBase" -ForegroundColor Cyan
+    Invoke-Native $nssm 'set' $ServiceName 'AppEnvironmentExtra' @envArgs | Out-Null
+  }
   Write-Host "Restarting '$ServiceName'..." -ForegroundColor Cyan
   Invoke-Native $nssm 'restart' $ServiceName | Out-Null
   Write-Host "Updated. UI at http://localhost:$Port" -ForegroundColor Green
@@ -158,7 +174,8 @@ Write-Host "Installing service '$ServiceName'..." -ForegroundColor Cyan
 if ((Invoke-Native $nssm 'install' $ServiceName $nodeExe 'dist\index.js') -ne 0) { throw 'nssm install failed.' }
 Invoke-Native $nssm 'set' $ServiceName 'AppDirectory' $serverDir | Out-Null
 Invoke-Native $nssm 'set' $ServiceName 'Start' 'SERVICE_AUTO_START' | Out-Null
-Invoke-Native $nssm 'set' $ServiceName 'AppEnvironmentExtra' "PORT=$Port" | Out-Null
+Invoke-Native $nssm 'set' $ServiceName 'AppEnvironmentExtra' @envArgs | Out-Null
+if ($SpotBase) { Write-Host "Spot host override: BINANCE_SPOT_BASE=$SpotBase" -ForegroundColor DarkGray }
 Invoke-Native $nssm 'set' $ServiceName 'AppStdout' (Join-Path $serverDir 'logs\out.log') | Out-Null
 Invoke-Native $nssm 'set' $ServiceName 'AppStderr' (Join-Path $serverDir 'logs\err.log') | Out-Null
 Invoke-Native $nssm 'set' $ServiceName 'AppRotateFiles' '1' | Out-Null

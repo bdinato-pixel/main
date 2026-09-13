@@ -112,6 +112,8 @@ powershell -ExecutionPolicy Bypass -File terminal\scripts\install-service.ps1
 
 The UI is at <http://localhost:8720>. After a `git pull`, refresh with
 `... install-service.ps1 -Update`; remove with `... install-service.ps1 -Uninstall`.
+If the default spot host blocks signed calls in your region, point it at an
+alternate: `... install-service.ps1 -SpotBase https://api-gcp.binance.com`.
 (The script self-elevates if you forget to run it as admin.)
 
 Prefer to do it by hand, or on another OS? Build once (`npm run build`), then:
