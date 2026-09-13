@@ -178,15 +178,26 @@ export function buildRouter(engine: TradingEngine): Router {
     const { accountId, market } = accountAndMarket(req);
     try {
       const adapter = await engine.adapter(accountId, market);
-      const [balances, positions, orders] = await Promise.all([
+      // Fetch parts independently so one failing endpoint (e.g. a geo/edge-
+      // restricted spot call) doesn't wipe the whole view or dump an error page.
+      const [b, p, o] = await Promise.allSettled([
         adapter.getBalances(),
         adapter.getPositions(),
         adapter.getOpenOrders(),
       ]);
-      // Adopt any exchange position a terminal order opened but whose fill the
-      // engine missed, so its TP/SL get placed (reuses positions just fetched).
-      await engine.reconcile(accountId, market, positions).catch(() => {});
-      res.json({ balances, positions, orders, managed: engine.db.openPositions(accountId) });
+      const failed: string[] = [];
+      const balances = b.status === 'fulfilled' ? b.value : (failed.push('balances'), []);
+      const positions = p.status === 'fulfilled' ? p.value : (failed.push('positions'), []);
+      const orders = o.status === 'fulfilled' ? o.value : (failed.push('open orders'), []);
+      // Only reconcile when we actually have live positions to compare against.
+      if (p.status === 'fulfilled') await engine.reconcile(accountId, market, positions).catch(() => {});
+      let warning: string | undefined;
+      if (failed.length) {
+        const reason = [b, p, o].find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined;
+        const msg = reason ? (reason.reason instanceof Error ? reason.reason.message : String(reason.reason)) : 'request failed';
+        warning = `${market} ${failed.join(', ')} unavailable — ${msg}`;
+      }
+      res.json({ balances, positions, orders, managed: engine.db.openPositions(accountId), warning });
     } catch (e) {
       res.status(502).json({ error: e instanceof Error ? e.message : String(e) });
     }

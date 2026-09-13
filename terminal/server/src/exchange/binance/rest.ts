@@ -72,15 +72,21 @@ export class BinanceRest {
 
   private async parse<T>(res: Response): Promise<T> {
     const text = await res.text();
-    let body: unknown;
-    try {
-      body = text ? JSON.parse(text) : {};
-    } catch {
-      body = { msg: text };
+    const looksJson = /^\s*[[{]/.test(text);
+    let body: unknown = {};
+    if (text && looksJson) {
+      try {
+        body = JSON.parse(text);
+      } catch {
+        body = {};
+      }
     }
     if (!res.ok) {
       const e = body as { code?: number; msg?: string };
-      throw new BinanceApiError(res.status, e.code ?? 0, e.msg ?? text);
+      // Binance JSON errors carry code/msg; edge failures (e.g. an nginx "410
+      // Gone" HTML page) don't — use the status text instead of dumping HTML.
+      const message = e.msg ?? (res.statusText || 'request failed');
+      throw new BinanceApiError(res.status, e.code ?? 0, message);
     }
     return body as T;
   }
