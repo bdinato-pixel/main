@@ -96,6 +96,52 @@ npm run dev:server     # tsx watch on :8720
 npm run dev:web        # vite dev server on :5173 (proxies /api, /hook, /ws)
 ```
 
+## Run it 24/7 (no terminal window)
+
+`npm start` keeps a terminal open. To have the terminal (and its always-on
+work — the TP/SL reconcile loop, candle-close stops, trailing) run in the
+background, on boot, and restart itself if it crashes, install it as a service.
+
+Build once first (`npm run build`). Then pick one:
+
+**Windows — NSSM (recommended).** A true service; survives logout, auto-starts
+on boot, restarts on crash. Download `nssm.exe` from <https://nssm.cc>, then in
+an **Administrator** terminal (adjust the two paths — use `where node` to find
+node.exe):
+
+```bat
+nssm install TradeHook "C:\Program Files\nodejs\node.exe" dist\index.js
+nssm set TradeHook AppDirectory "C:\path\to\main\terminal\server"
+nssm set TradeHook Start SERVICE_AUTO_START
+nssm set TradeHook AppStdout "C:\path\to\main\terminal\server\logs\out.log"
+nssm set TradeHook AppStderr "C:\path\to\main\terminal\server\logs\err.log"
+nssm start TradeHook
+```
+
+The UI stays at <http://localhost:8720>. To update after `git pull`:
+`npm run build`, then `nssm restart TradeHook`. Stop/remove with
+`nssm stop TradeHook` / `nssm remove TradeHook confirm`.
+
+> **Important:** `AppDirectory` must be `terminal\server` (or set
+> `nssm set TradeHook AppEnvironmentExtra DATA_FILE=C:\...\terminal\server\data\terminal.json`)
+> so the service uses the **same** `data/terminal.json` as `npm start` — the one
+> holding your accounts, hooks and managed positions. A different working
+> directory starts from an empty paper-only database.
+
+**Cross-platform — PM2.** `npm i -g pm2`, then from `terminal/server`:
+`pm2 start dist/index.js --name tradehook && pm2 save`. On Windows also run
+`npm i -g pm2-windows-startup && pm2-startup install`; on Linux/macOS run the
+command `pm2 startup` prints. Update: `npm run build && pm2 restart tradehook`.
+
+**Simplest — Task Scheduler (Windows, no install).** Create a task, trigger
+*At log on* (or *At startup*), action *Start a program* → program `node`,
+arguments `dist\index.js`, **Start in** `C:\path\to\main\terminal\server`; tick
+*Run whether user is logged on or not* and *Hidden*. (No crash auto-restart —
+prefer NSSM for that.)
+
+**Linux/macOS — systemd/launchd** work the same way: run `node dist/index.js`
+with the working directory set to `terminal/server`.
+
 Open the UI, go to **Settings**, and either stay on the default **paper
 trading** account or add a Binance account with an API key
 (*Enable Reading* + *Enable Spot & Margin Trading* and/or *Enable Futures*;
