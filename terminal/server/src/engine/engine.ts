@@ -15,7 +15,7 @@ import type { ExchangeAdapter, ExchangePosition, FillEvent, SymbolInfo } from '.
 import { computeBaseQty, type AmountCtx } from './amount.js';
 import { decide, relevantSide } from './decide.js';
 import { planGrid, planTpOrders, slPrice as computeSlPrice, updateTrailing } from './modules.js';
-import { quantizeOrder, quantizeQty } from './quantizer.js';
+import { quantizeOrder, quantizePrice, quantizeQty } from './quantizer.js';
 import { effectiveHook, parseSignal, SignalError, signalTpOrders } from './signal.js';
 import { defaultGridConfig, defaultSlModule, defaultSlxModule, defaultTpModule } from './defaults.js';
 
@@ -712,6 +712,88 @@ export class TradingEngine extends EventEmitter {
       qty,
       ...this.closeParams(pos),
     });
+  }
+
+  /**
+   * Reprice a resting order by cancel-and-replace, preserving its side, type,
+   * remaining quantity and (for managed TP/SL/entry orders) its link to the
+   * managed position. Used by chart drag-to-move. Serialized with fills so a
+   * fill can't interleave with the cancel/replace.
+   */
+  async moveOrder(accountId: string, market: MarketType, symbol: string, orderId: string, newPrice: number): Promise<string> {
+    const adapter = await this.adapter(accountId, market);
+    const info = await adapter.symbolInfo(symbol);
+    if (!info) throw new Error(`Unknown symbol ${symbol}`);
+    const price = quantizePrice(info, newPrice);
+    if (!(price > 0)) throw new Error('Invalid target price');
+    const hedge = this.isHedge(accountId, market);
+
+    const qk = this.key(accountId, market, symbol);
+    const prev = this.fillQueues.get(qk) ?? Promise.resolve();
+    let newId = '';
+    const next = prev.then(async () => {
+      const orders = await adapter.getOpenOrders(symbol);
+      const o = orders.find((x) => x.orderId === orderId);
+      if (!o) throw new Error('Order not found (it may have filled or been cancelled)');
+      const remaining = o.origQty - o.executedQty;
+      if (!(remaining > 0)) throw new Error('Order already filled');
+      const usesStop = o.stopPrice > 0; // SL/stop orders carry a stopPrice; TP/entries are limits
+
+      // Find the managed position this order belongs to and its role, so the
+      // replacement keeps the right reduce-only / positionSide and re-links.
+      const pos = this.db
+        .openPositions(accountId)
+        .find(
+          (p) =>
+            p.market === market &&
+            p.symbol === symbol &&
+            (p.tpOrderIds.includes(orderId) || p.slOrderId === orderId || (p.entryOrderIds ?? []).includes(orderId)),
+        );
+      const role: 'tp' | 'sl' | 'entry' | 'none' = !pos
+        ? 'none'
+        : pos.slOrderId === orderId
+          ? 'sl'
+          : pos.tpOrderIds.includes(orderId)
+            ? 'tp'
+            : 'entry';
+
+      let extra: { reduceOnly?: boolean; positionSide?: 'LONG' | 'SHORT' } = {};
+      if (pos && (role === 'tp' || role === 'sl')) extra = this.closeParams(pos);
+      else if (pos && role === 'entry') extra = hedge ? { positionSide: pos.side === 'long' ? 'LONG' : 'SHORT' } : {};
+      else extra = { reduceOnly: o.reduceOnly && market === 'futures' && !hedge };
+
+      await adapter.cancelOrder(symbol, orderId);
+      const placed = await adapter.placeOrder({
+        symbol,
+        side: o.side,
+        type: usesStop ? 'STOP_MARKET' : 'LIMIT',
+        qty: remaining,
+        price: usesStop ? undefined : price,
+        stopPrice: usesStop ? price : undefined,
+        ...extra,
+      });
+      newId = placed.orderId;
+
+      // Re-link the new order id on the managed position.
+      if (pos) {
+        if (role === 'tp') {
+          const idx = pos.tpOrderIds.indexOf(orderId);
+          pos.tpOrderIds = pos.tpOrderIds.map((id) => (id === orderId ? newId : id));
+          if (pos.tpLevels && idx >= 0 && idx < pos.tpLevels.length) pos.tpLevels[idx].price = price;
+        } else if (role === 'sl') {
+          pos.slOrderId = newId;
+          pos.slPrice = price;
+        } else if (role === 'entry') {
+          pos.entryOrderIds = (pos.entryOrderIds ?? []).map((id) => (id === orderId ? newId : id));
+        }
+        this.db.upsertPosition(pos);
+      }
+      this.log('info', `moved ${role} order ${symbol} ${orderId} → ${newId} @ ${price}`);
+      this.changed();
+    });
+    this.fillQueues.set(qk, next);
+    await next;
+    return newId;
   }
 
   // ------------------------------------------------------------------

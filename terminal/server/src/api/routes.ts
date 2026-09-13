@@ -318,5 +318,19 @@ export function buildRouter(engine: TradingEngine): Router {
     }
   });
 
+  // Reprice a resting order (chart drag-to-move): cancel-and-replace, keeping
+  // its managed-position link.
+  r.post('/api/orders/:symbol/:orderId/move', async (req, res) => {
+    const { accountId, market } = accountAndMarket(req);
+    const price = Number((req.body as { price?: number })?.price);
+    if (!Number.isFinite(price) || price <= 0) return res.status(400).json({ error: 'price required' });
+    try {
+      const orderId = await engine.moveOrder(accountId, market, req.params.symbol, req.params.orderId, price);
+      res.json({ ok: true, orderId });
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
   return r;
 }

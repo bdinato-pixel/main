@@ -69,6 +69,11 @@ export const api = {
     req<{ ok: boolean; orderId: string }>('/api/orders', { method: 'POST', body: JSON.stringify(order) }),
   cancelOrder: (account: string, market: MarketType, symbol: string, orderId: string) =>
     req(`/api/orders/${symbol}/${orderId}?${qs(account, market)}`, { method: 'DELETE' }),
+  moveOrder: (account: string, market: MarketType, symbol: string, orderId: string, price: number) =>
+    req<{ ok: boolean; orderId: string }>(`/api/orders/${symbol}/${orderId}/move?${qs(account, market)}`, {
+      method: 'POST',
+      body: JSON.stringify({ price }),
+    }),
   closePosition: (id: string, fraction: number) =>
     req(`/api/positions/${id}/close`, { method: 'POST', body: JSON.stringify({ fraction }) }),
   managePosition: (data: Record<string, unknown>) =>
