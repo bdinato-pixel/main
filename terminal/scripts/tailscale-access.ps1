@@ -39,6 +39,22 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Run an external program without letting its stderr become a terminating error
+# (Windows PowerShell 5.1 turns native stderr into a NativeCommandError under
+# $ErrorActionPreference='Stop'). Returns the process exit code.
+function Invoke-Native {
+  param(
+    [Parameter(Mandatory)][string]$FilePath,
+    [Parameter(ValueFromRemainingArguments = $true)][string[]]$ArgList
+  )
+  $old = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    & $FilePath @ArgList 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+    return $LASTEXITCODE
+  } finally { $ErrorActionPreference = $old }
+}
+
 function Test-Admin {
   $id = [Security.Principal.WindowsIdentity]::GetCurrent()
   (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole(
@@ -70,14 +86,22 @@ $ruleName = "TradeHook $Port (Tailscale)"
 
 # --- Undo --------------------------------------------------------------------
 if ($Off) {
-  & $ts serve reset 2>$null
+  Invoke-Native $ts 'serve' 'reset' | Out-Null
   Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
   Write-Host 'Tailscale sharing disabled.' -ForegroundColor Green
   exit
 }
 
 # --- Check Tailscale is connected and learn this node's identity -------------
-$status = (& $ts status --json 2>$null) | ConvertFrom-Json
+function Get-TsStatus {
+  $old = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try { $raw = & $ts status --json 2>$null } finally { $ErrorActionPreference = $old }
+  if (-not $raw) { return $null }
+  try { return ($raw | ConvertFrom-Json) } catch { return $null }
+}
+
+$status = Get-TsStatus
 if (-not $status) { throw "Couldn't query Tailscale. Is it installed and running?" }
 if ($status.BackendState -ne 'Running') {
   throw "Tailscale isn't connected (state: $($status.BackendState)). Run 'tailscale up', sign in, then re-run."
@@ -87,8 +111,7 @@ $ip = @($status.Self.TailscaleIPs) | Select-Object -First 1
 
 # --- Enable Serve (HTTPS, tailnet-only) --------------------------------------
 Write-Host "Publishing the terminal on your tailnet (port $Port)..." -ForegroundColor Cyan
-& $ts serve --bg $Port
-$served = ($LASTEXITCODE -eq 0)
+$served = ((Invoke-Native $ts 'serve' '--bg' "$Port") -eq 0)
 if (-not $served) {
   Write-Warning @'
 `tailscale serve` failed. Most often this means HTTPS isn't enabled for the
@@ -123,4 +146,4 @@ Write-Host 'On your phone: install the Tailscale app, sign in to the SAME accoun
 Write-Host 'keep it connected, then open the https URL above.' -ForegroundColor DarkGray
 Write-Host 'Undo with:  tailscale-access.ps1 -Off' -ForegroundColor DarkGray
 Write-Host ''
-& $ts serve status 2>$null
+Invoke-Native $ts 'serve' 'status' | Out-Null
