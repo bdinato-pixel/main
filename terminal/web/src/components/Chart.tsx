@@ -9,19 +9,32 @@ import {
 } from 'lightweight-charts';
 import { api } from '../api';
 import { useStore } from '../store';
+import type { Kline } from '../types';
 
 const INTERVALS = ['1m', '5m', '15m', '1h', '4h', '1d'];
+
+/** Decimal places implied by a tick size (0.0001 → 4, 0.00025 → 5, 5 → 0). */
+function decimalsFromTick(tick: number | undefined): number {
+  if (!tick || tick <= 0) return 2;
+  const [mantissa, exp] = tick.toExponential().split('e');
+  const mantissaDecimals = (mantissa.split('.')[1] ?? '').length;
+  return Math.min(8, Math.max(0, -Number(exp) + mantissaDecimals));
+}
+
+type Bar = { time: number; open: number; high: number; low: number; close: number };
 
 export function Chart() {
   const { symbol, interval, market, setInterval: setIv } = useStore();
   const account = useStore((s) => s.account());
   const price = useStore((s) => s.prices[symbol]);
+  const info = useStore((s) => s.symbols.find((x) => x.symbol === symbol));
   const managed = useStore((s) => s.managed.find((p) => p.symbol === symbol && p.market === market));
 
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const linesRef = useRef<IPriceLine[]>([]);
+  const lastBarRef = useRef<Bar | null>(null);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -54,47 +67,60 @@ export function Chart() {
     };
   }, []);
 
-  // Load candles when symbol/interval/market changes.
+  // Match the price-scale precision to the symbol's tick size, otherwise
+  // sub-cent coins (e.g. 1000BONK ~0.00278) round to 0.00 on the axis.
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    const decimals = decimalsFromTick(info?.tickSize);
+    series.applyOptions({
+      priceFormat: { type: 'price', precision: decimals, minMove: info?.tickSize || 1 / 10 ** decimals },
+    });
+  }, [info?.tickSize, symbol]);
+
+  // Load candles when symbol/interval/market changes, and subscribe the pair
+  // to the live price stream so the header/last candle track in realtime.
   useEffect(() => {
     let cancelled = false;
-    void api
-      .klines(account, market, symbol, interval)
-      .then((klines) => {
-        if (cancelled || !seriesRef.current) return;
-        seriesRef.current.setData(
-          klines.map((k) => ({
-            time: (k.openTime / 1000) as never,
+    void api.watch(account, market, symbol).catch(() => {});
+    const load = () =>
+      api
+        .klines(account, market, symbol, interval)
+        .then((klines) => {
+          if (cancelled || !seriesRef.current) return;
+          const bars: Bar[] = klines.map((k: Kline) => ({
+            time: k.openTime / 1000,
             open: k.open,
             high: k.high,
             low: k.low,
             close: k.close,
-          })),
-        );
-        chartRef.current?.timeScale().fitContent();
-      })
-      .catch(() => {});
-    const reload = setInterval(() => {
-      void api
-        .klines(account, market, symbol, interval)
-        .then((klines) => {
-          if (cancelled || !seriesRef.current) return;
-          seriesRef.current.setData(
-            klines.map((k) => ({
-              time: (k.openTime / 1000) as never,
-              open: k.open,
-              high: k.high,
-              low: k.low,
-              close: k.close,
-            })),
-          );
+          }));
+          seriesRef.current.setData(bars as never);
+          lastBarRef.current = bars.length ? { ...bars[bars.length - 1] } : null;
         })
         .catch(() => {});
-    }, 20_000);
+    void load().then(() => chartRef.current?.timeScale().fitContent());
+    const reload = setInterval(load, 20_000);
     return () => {
       cancelled = true;
       clearInterval(reload);
     };
   }, [symbol, interval, market, account]);
+
+  // Live tick: extend the last candle (close, and high/low envelope).
+  useEffect(() => {
+    const series = seriesRef.current;
+    const bar = lastBarRef.current;
+    if (!series || !bar || !price || price <= 0) return;
+    const updated: Bar = {
+      ...bar,
+      close: price,
+      high: Math.max(bar.high, price),
+      low: Math.min(bar.low, price),
+    };
+    lastBarRef.current = updated;
+    series.update(updated as never);
+  }, [price]);
 
   // Overlay entry/TP/SL lines for the managed position on this pair.
   useEffect(() => {
@@ -114,11 +140,15 @@ export function Chart() {
     for (const [i, lvl] of (managed.tpLevels ?? []).entries()) mk(lvl.price, '#26a69a', `TP${i + 1}`);
   }, [managed]);
 
+  const priceDecimals = decimalsFromTick(info?.tickSize);
+
   return (
     <>
       <div className="chart-toolbar">
         <strong>{symbol}</strong>
-        <span className="price">{price ? price.toLocaleString(undefined, { maximumFractionDigits: 8 }) : '—'}</span>
+        <span className="price">
+          {price ? price.toLocaleString(undefined, { maximumFractionDigits: Math.max(priceDecimals, 2) }) : '—'}
+        </span>
         <div className="spacer" style={{ flex: 1 }} />
         {INTERVALS.map((iv) => (
           <button key={iv} className={iv === interval ? 'primary' : 'ghost'} onClick={() => setIv(iv)}>

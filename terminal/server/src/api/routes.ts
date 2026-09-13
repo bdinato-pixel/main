@@ -188,6 +188,20 @@ export function buildRouter(engine: TradingEngine): Router {
     }
   });
 
+  // Subscribe a symbol to the live price stream (the chart calls this for the
+  // pair being viewed so its header price and last candle update in realtime).
+  r.post('/api/watch', async (req, res) => {
+    const body = z.object({ accountId: z.string(), market: marketSchema, symbol: z.string().min(1) }).safeParse(req.body);
+    if (!body.success) return res.status(400).json({ error: body.error.message });
+    try {
+      const adapter = await engine.adapter(body.data.accountId, body.data.market);
+      adapter.watchPrice(body.data.symbol);
+      res.json({ ok: true });
+    } catch (e) {
+      res.status(502).json({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
   r.get('/api/klines', async (req, res) => {
     const { accountId, market } = accountAndMarket(req);
     const symbol = String(req.query.symbol ?? '');
