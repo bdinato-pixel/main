@@ -40,12 +40,29 @@ type Params = Record<string, string | number | boolean | undefined>;
  */
 export class BinanceRest {
   private timeOffset = 0;
+  private lastSyncAt = 0;
+  private syncing: Promise<void> | null = null;
+  /** Re-sync the clock offset if it's older than this (guards drift over days). */
+  private static readonly SYNC_TTL_MS = 5 * 60_000;
 
   constructor(
     readonly market: MarketType,
     private readonly creds: BinanceCredentials,
     private readonly base = BINANCE_BASE[market],
   ) {}
+
+  /** Ensure the clock offset is fresh before signing; de-dupes concurrent syncs. */
+  private async ensureFreshTime(): Promise<void> {
+    if (Date.now() - this.lastSyncAt <= BinanceRest.SYNC_TTL_MS) return;
+    if (!this.syncing) {
+      this.syncing = this.syncTime()
+        .catch(() => {})
+        .finally(() => {
+          this.syncing = null;
+        });
+    }
+    await this.syncing;
+  }
 
   private qs(params: Params): string {
     const clean = Object.entries(params).filter(([, v]) => v !== undefined && v !== '');
@@ -58,7 +75,13 @@ export class BinanceRest {
     return this.parse<T>(res);
   }
 
-  async signed<T>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, params: Params = {}): Promise<T> {
+  async signed<T>(
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    path: string,
+    params: Params = {},
+    retry = true,
+  ): Promise<T> {
+    await this.ensureFreshTime();
     const query = this.qs({
       ...params,
       timestamp: Date.now() + this.timeOffset,
@@ -67,7 +90,18 @@ export class BinanceRest {
     const signature = createHmac('sha256', this.creds.apiSecret).update(query).digest('hex');
     const url = `${this.base}${path}?${query}&signature=${signature}`;
     const res = await fetch(url, { method, headers: { 'X-MBX-APIKEY': this.creds.apiKey } });
-    return this.parse<T>(res);
+    try {
+      return await this.parse<T>(res);
+    } catch (e) {
+      // -1021: timestamp out of the exchange's window (clock drift) — force a
+      // fresh time sync and retry once.
+      if (retry && e instanceof BinanceApiError && e.code === -1021) {
+        this.lastSyncAt = 0;
+        await this.syncTime().catch(() => {});
+        return this.signed<T>(method, path, params, false);
+      }
+      throw e;
+    }
   }
 
   private async parse<T>(res: Response): Promise<T> {
@@ -94,8 +128,13 @@ export class BinanceRest {
   /** Sync local clock offset against the exchange (avoids -1021 errors). */
   async syncTime(): Promise<void> {
     const path = this.market === 'spot' ? '/api/v3/time' : '/fapi/v1/time';
+    const t0 = Date.now();
     const { serverTime } = await this.public<{ serverTime: number }>(path);
-    this.timeOffset = serverTime - Date.now();
+    const t1 = Date.now();
+    // Compensate for round-trip latency (assume symmetric): the server clock at
+    // t1 ≈ serverTime + rtt/2.
+    this.timeOffset = serverTime + Math.round((t1 - t0) / 2) - t1;
+    this.lastSyncAt = Date.now();
   }
 
   // ---- listen key (user data stream) ----
