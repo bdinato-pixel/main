@@ -136,13 +136,27 @@ export function OrderPanel() {
     if (p.side) setSide(p.side);
     if (p.leverage) setLeverage(p.leverage);
     if (p.marginMode) setMarginMode(p.marginMode);
-    if (p.entries.length >= 2) {
+
+    // Entry legs: explicit entries (+ DCA), or a market/CMP entry seeded with
+    // the target symbol's current price when the call also gives DCA levels.
+    const targetSym = p.symbol ?? symbol;
+    const targetLast = prices[targetSym] || tickers.find((t) => t.symbol === targetSym)?.last || 0;
+    let legs: number[];
+    if (p.entries.length > 0) legs = [...p.entries, ...p.dca];
+    else if (p.marketEntry) legs = p.dca.length && targetLast > 0 ? [targetLast, ...p.dca] : [];
+    else legs = p.dca;
+
+    if (legs.length >= 2) {
       setGridOn(true);
-      setGrid({ ...DEFAULT_GRID, count: p.entries.length, priceMode: 'levels', levels: p.entries.map((price) => ({ price })) });
-    } else if (p.entries.length === 1) {
+      setGrid({ ...DEFAULT_GRID, count: legs.length, priceMode: 'levels', levels: legs.map((price) => ({ price })) });
+    } else if (legs.length === 1) {
       setGridOn(false);
       setType('limit');
-      setLimitPrice(p.entries[0]);
+      setLimitPrice(legs[0]);
+    } else {
+      // Pure market entry (e.g. "at CMP" with no DCA).
+      setGridOn(false);
+      setType('market');
     }
     if (p.tps.length) {
       setTpOn(true);
@@ -442,7 +456,13 @@ export function OrderPanel() {
                   {parsed.leverage ? `${parsed.leverage}x` : ''} {parsed.marginMode ?? ''}
                 </div>
               )}
-              <div className="mono"><span className="dim">Entries </span>{parsed.entries.join(', ') || '—'}</div>
+              <div className="mono">
+                <span className="dim">Entries </span>
+                {parsed.entries.length ? parsed.entries.join(', ') : parsed.marketEntry ? 'market (CMP)' : '—'}
+              </div>
+              {parsed.dca.length > 0 && (
+                <div className="mono"><span className="dim">DCA </span>{parsed.dca.join(', ')}</div>
+              )}
               <div className="mono"><span className="dim">TP </span>{parsed.tps.join(', ') || '—'}</div>
               <div className="mono">
                 <span className="dim">SL </span>

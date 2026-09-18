@@ -17,7 +17,8 @@ test('parses a Discord-style call (symbol, side, entry+DCA, TP, candle SL)', () 
   const p = parseSignal(text);
   assert.equal(p.symbol, 'API3USDT');
   assert.equal(p.side, 'buy');
-  assert.deepEqual(p.entries, [0.2453, 0.2318]); // entry + DCA leg
+  assert.deepEqual(p.entries, [0.2453]); // explicit entry
+  assert.deepEqual(p.dca, [0.2318]); // DCA kept separate
   assert.deepEqual(p.tps, [0.3547]);
   assert.ok(p.sl);
   assert.equal(p.sl.price, 0.2259);
@@ -67,7 +68,8 @@ test('parses an emoji/labelled call with leverage, multi-target and 1-day candle
   assert.equal(p.side, 'buy');
   assert.equal(p.leverage, 20);
   assert.equal(p.marginMode, 'cross');
-  assert.deepEqual(p.entries, [0.14165, 0.136]); // entry + DCA leg, not the 0.5%/1% notes
+  assert.deepEqual(p.entries, [0.14165]); // explicit entry (not the 0.5%/1% notes)
+  assert.deepEqual(p.dca, [0.136]); // DCA leg
   assert.deepEqual(p.tps, [0.145, 0.15, 0.156, 0.165, 0.173, 0.18]);
   assert.equal(p.sl?.price, 0.135);
   assert.equal(p.sl?.trigger, 'candle');
@@ -82,10 +84,26 @@ test('parses a prose call with side-before-ticker, CMP entry and 1H-close stop; 
   assert.equal(p.symbol, 'INITUSDT');
   assert.equal(p.side, 'buy');
   assert.equal(p.entries.length, 0); // "at CMP" → market entry
+  assert.equal(p.marketEntry, true);
   assert.equal(p.sl?.price, 0.0646);
   assert.equal(p.sl?.trigger, 'candle');
   assert.equal(p.sl?.candleTf, '1h');
   assert.ok(p.warnings.some((w) => /take-profit/i.test(w))); // TPs were only on the chart
+});
+
+test('one-line call: DCA and stop on the same line are not confused (XMR)', () => {
+  // Regression: a single line packing CMP + DCA + candle stop used to read the
+  // DCA price (510.39) as the SL and drop the DCA.
+  const p = parseSignal('Going long XMR here at CMP. Tps above, DCA @ 510.39, 4H close under 502 for stops.');
+  assert.equal(p.symbol, 'XMRUSDT');
+  assert.equal(p.side, 'buy');
+  assert.equal(p.entries.length, 0); // CMP → market
+  assert.equal(p.marketEntry, true);
+  assert.deepEqual(p.dca, [510.39]); // DCA captured
+  assert.equal(p.sl?.price, 502); // stop is 502, NOT the DCA 510.39
+  assert.equal(p.sl?.trigger, 'candle');
+  assert.equal(p.sl?.candleTf, '4h');
+  assert.deepEqual(p.tps, []); // "Tps above" → on the chart
 });
 
 test('empty / junk input yields warnings, no throw', () => {
