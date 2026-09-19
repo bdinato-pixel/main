@@ -142,9 +142,17 @@ export function OrderPanel() {
     const targetSym = p.symbol ?? symbol;
     const targetLast = prices[targetSym] || tickers.find((t) => t.symbol === targetSym)?.last || 0;
     let legs: number[];
-    if (p.entries.length > 0) legs = [...p.entries, ...p.dca];
-    else if (p.marketEntry) legs = p.dca.length && targetLast > 0 ? [targetLast, ...p.dca] : [];
-    else legs = p.dca;
+    if (p.entries.length > 0) {
+      legs = [...p.entries, ...p.dca];
+    } else if (p.marketEntry) {
+      // Market/CMP entry: if the call also gives DCA levels, seed a grid whose
+      // first leg is the current price (≈immediate fill) plus the DCA legs.
+      // If no live price is available (e.g. the symbol isn't the one on the
+      // chart yet), keep the DCA legs anyway — never drop them.
+      legs = p.dca.length ? (targetLast > 0 ? [targetLast, ...p.dca] : [...p.dca]) : [];
+    } else {
+      legs = p.dca;
+    }
 
     if (legs.length >= 2) {
       setGridOn(true);

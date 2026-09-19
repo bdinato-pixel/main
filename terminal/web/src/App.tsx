@@ -68,6 +68,9 @@ export default function App() {
           ))}
         </nav>
         <div className="spacer" />
+        <span className="build-id" title={`Running build ${__BUILD_ID__}`}>
+          {__BUILD_ID__}
+        </span>
         <AccountBadge />
       </div>
       {error && <div className="error-bar">⚠ {error}</div>}
