@@ -111,6 +111,87 @@ test('reconcile does not adopt an exchange position with no matching intent', as
   await engine.shutdown();
 });
 
+test('reconcile prunes a managed position that was closed on the exchange', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'terminal-reconcile-prune-'));
+  const db = new Db(join(dir, 'db.json'));
+  const source = new ManualPriceSource(SYMBOLS);
+  const adapter = new NoFillPaperAdapter('futures', 'paper', source, 10_000);
+  const engine = new TradingEngine(db, async () => adapter);
+  source.setPrice('ENAUSDT', 0.14);
+
+  // Open + adopt a managed position with protection (fills are swallowed).
+  await engine.manualOrder({
+    accountId: 'paper',
+    market: 'futures',
+    symbol: 'ENAUSDT',
+    side: 'buy',
+    type: 'limit',
+    qty: 500,
+    price: 0.14,
+    leverage: 20,
+    tp: { ...defaultTpModule(), enabled: true, orders: [{ ofsPct: 3, price: 0, piecePct: 100 }] },
+    sl: { ...defaultSlModule(), enabled: true, ofsPct: 5 },
+  });
+  await engine.settle();
+  await engine.reconcile('paper', 'futures');
+  await engine.settle();
+  const pos = db.openPositionFor('paper', 'futures', 'ENAUSDT');
+  assert.ok(pos, 'position adopted');
+  assert.ok((await adapter.getOpenOrders('ENAUSDT')).length >= 2, 'protection resting on the exchange');
+
+  // Age it past the grace window, then flatten it on the exchange directly
+  // (a manual close in the Binance app) — the fill is never heard.
+  pos.openedAt = Date.now() - 60_000;
+  db.upsertPosition(pos);
+  await adapter.placeOrder({ symbol: 'ENAUSDT', side: 'SELL', type: 'MARKET', qty: 500, reduceOnly: true });
+  assert.equal((await adapter.getPositions()).length, 0, 'exchange position gone');
+
+  await engine.reconcile('paper', 'futures');
+  await engine.settle();
+
+  assert.equal(db.openPositionFor('paper', 'futures', 'ENAUSDT'), undefined, 'stale managed row removed');
+  assert.equal(db.openPositions('paper').length, 0, 'no lingering managed positions');
+  const closed = db.positions.find((p) => p.id === pos.id);
+  assert.equal(closed?.status, 'closed', 'position marked closed');
+  assert.equal((await adapter.getOpenOrders('ENAUSDT')).length, 0, 'leftover protection cancelled');
+
+  await engine.shutdown();
+});
+
+test('reconcile does not prune a just-opened position missing from the snapshot (grace)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'terminal-reconcile-grace-'));
+  const db = new Db(join(dir, 'db.json'));
+  const source = new ManualPriceSource(SYMBOLS);
+  const adapter = new NoFillPaperAdapter('futures', 'paper', source, 10_000);
+  const engine = new TradingEngine(db, async () => adapter);
+  source.setPrice('ENAUSDT', 0.14);
+
+  await engine.manualOrder({
+    accountId: 'paper',
+    market: 'futures',
+    symbol: 'ENAUSDT',
+    side: 'buy',
+    type: 'limit',
+    qty: 500,
+    price: 0.14,
+    leverage: 20,
+    sl: { ...defaultSlModule(), enabled: true, ofsPct: 5 },
+  });
+  await engine.settle();
+  await engine.reconcile('paper', 'futures');
+  await engine.settle();
+  const pos = db.openPositionFor('paper', 'futures', 'ENAUSDT');
+  assert.ok(pos, 'position adopted (openedAt = now, within grace)');
+
+  // Exchange snapshot is empty (e.g. it predates the just-opened position) —
+  // the grace window must keep the fresh position rather than prune it.
+  await engine.reconcile('paper', 'futures', []);
+  await engine.settle();
+  assert.ok(db.openPositionFor('paper', 'futures', 'ENAUSDT'), 'fresh position not pruned within grace');
+
+  await engine.shutdown();
+});
+
 test('persisted intents survive a restart and reconcile after it', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'terminal-reconcile3-'));
   const dbFile = join(dir, 'db.json');
