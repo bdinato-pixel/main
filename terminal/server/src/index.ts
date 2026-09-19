@@ -36,8 +36,25 @@ const app = express();
 app.use(buildRouter(engine));
 
 if (existsSync(config.webDist)) {
-  app.use(express.static(config.webDist));
-  app.get(/^\/(?!api|hook|ws).*/u, (_req, res) => res.sendFile('index.html', { root: config.webDist }));
+  app.use(
+    express.static(config.webDist, {
+      setHeaders: (res, filePath) => {
+        // Vite gives assets hashed filenames that change every build, so they
+        // can be cached forever. index.html must NOT be cached, or the browser
+        // keeps loading the previous build's assets after an update.
+        if (filePath.endsWith('index.html')) {
+          res.setHeader('Cache-Control', 'no-cache');
+        } else if (/[\\/]assets[\\/]/.test(filePath)) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        }
+      },
+    }),
+  );
+  // SPA fallback — always revalidate so a new build is picked up immediately.
+  app.get(/^\/(?!api|hook|ws).*/u, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
+    res.sendFile('index.html', { root: config.webDist });
+  });
 }
 
 const server = createServer(app);
