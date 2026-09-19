@@ -24,6 +24,13 @@ export type AdapterFactory = (accountId: string, market: MarketType) => Promise<
 /** Pending intents older than this with no matching position are dropped. */
 const INTENT_TTL_MS = 3 * 24 * 60 * 60_000;
 
+/**
+ * A managed position younger than this is never pruned as "closed on the
+ * exchange", even if a positions snapshot doesn't list it yet — guards against
+ * a snapshot that predates a just-opened position.
+ */
+const PRUNE_GRACE_MS = 15_000;
+
 export interface ManualOrderInput {
   accountId: string;
   market: MarketType;
@@ -1214,22 +1221,33 @@ export class TradingEngine extends EventEmitter {
    * intents with no matching position are dropped.
    */
   async reconcile(accountId: string, market: MarketType, knownPositions?: ExchangePosition[]): Promise<void> {
-    const pending = [...this.intents.entries()].filter(([, i]) => i.accountId === accountId && i.market === market);
-    if (pending.length === 0) return;
-    let adapter: ExchangeAdapter;
-    try {
-      adapter = await this.adapter(accountId, market);
-    } catch {
-      return;
-    }
+    let adapter: ExchangeAdapter | null = null;
     let positions = knownPositions;
     if (!positions) {
       try {
+        adapter = await this.adapter(accountId, market);
         positions = await adapter.getPositions();
       } catch {
         return;
       }
     }
+
+    // Drop managed positions the exchange no longer reports (e.g. closed
+    // directly on Binance) so the terminal doesn't keep a stale row with TP/SL
+    // it can no longer act on. Runs independently of pending intents.
+    await this.pruneClosedPositions(accountId, market, positions);
+
+    const pending = [...this.intents.entries()].filter(([, i]) => i.accountId === accountId && i.market === market);
+    if (pending.length === 0) return;
+    if (!adapter) {
+      try {
+        adapter = await this.adapter(accountId, market);
+      } catch {
+        return;
+      }
+    }
+    const ad = adapter;
+    if (!ad) return;
     const hedge = this.isHedge(accountId, market);
     const now = Date.now();
     for (const [key, intent] of pending) {
@@ -1249,7 +1267,42 @@ export class TradingEngine extends EventEmitter {
         this.dropIntent(key); // a real fill already created the managed position
         continue;
       }
-      await this.adoptPosition(adapter, key, intent, exPos);
+      await this.adoptPosition(ad, key, intent, exPos);
+    }
+  }
+
+  /**
+   * Mark managed positions closed when the exchange no longer reports them —
+   * e.g. the user closed the position directly on Binance. Cancels any leftover
+   * protective orders and removes the row so it stops showing in the terminal.
+   * `positions` must be a trusted live snapshot (a failed fetch never reaches
+   * here); a short grace period spares just-opened positions.
+   */
+  private async pruneClosedPositions(
+    accountId: string,
+    market: MarketType,
+    positions: ExchangePosition[],
+  ): Promise<void> {
+    const hedge = this.isHedge(accountId, market);
+    const now = Date.now();
+    const managed = this.db.openPositions(accountId).filter((p) => p.market === market);
+    let adapter: ExchangeAdapter | null = null;
+    for (const pos of managed) {
+      if (now - pos.openedAt < PRUNE_GRACE_MS) continue; // too fresh to trust the snapshot
+      const want = pos.side === 'long' ? 'LONG' : 'SHORT';
+      const live = positions.find(
+        (p) =>
+          p.symbol === pos.symbol &&
+          Math.abs(p.qty) > 1e-12 &&
+          (hedge ? p.positionSide === want : (p.qty > 0) === (pos.side === 'long')),
+      );
+      if (live) continue; // still open on the exchange
+      if (!adapter) adapter = await this.adapter(accountId, market).catch(() => null);
+      if (adapter) await this.cancelProtection(adapter, pos).catch(() => {});
+      this.dropIntent(this.intentKey(accountId, market, pos.symbol, pos.side));
+      this.db.markClosed(pos, pos.realizedPnl);
+      this.log('info', `position ${pos.symbol} ${pos.side} closed on the exchange — removed from terminal`);
+      this.changed();
     }
   }
 
