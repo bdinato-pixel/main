@@ -112,7 +112,11 @@ powershell -ExecutionPolicy Bypass -File terminal\scripts\install-service.ps1
 
 The UI is at <http://localhost:8720>. After a `git pull`, refresh with
 `... install-service.ps1 -Update`; remove with `... install-service.ps1 -Uninstall`.
-(The script self-elevates if you forget to run it as admin.)
+The build runs in your own window (so any error is visible and stops the
+update); only the service step self-elevates. When it finishes it prints the
+folder + commit the service is actually serving and warns if that doesn't match
+the folder you just built — the usual cause of an update that "didn't take"
+(e.g. a second checkout). Run `-Update` from the folder that warning names.
 
 Prefer to do it by hand, or on another OS? Build once (`npm run build`), then:
 

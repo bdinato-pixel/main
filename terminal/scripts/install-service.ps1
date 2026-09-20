@@ -9,6 +9,12 @@
   accounts, hooks and managed positions). Downloads NSSM automatically if it
   isn't already on PATH or next to this script. Re-run any time to refresh.
 
+  The build (npm install + npm run build) runs in YOUR window so any error is
+  visible and stops the update. Only the service step is elevated. After it
+  runs, the script verifies what the service is actually serving (folder,
+  commit, and the served bundle) and warns loudly if that doesn't match the
+  folder you just built — the usual cause of "my update didn't take".
+
 .PARAMETER ServiceName
   Service name (default: TradeHook).
 
@@ -20,6 +26,9 @@
 
 .PARAMETER Uninstall
   Stop and remove the service.
+
+.PARAMETER Elevated
+  Internal use only — set on the auto-elevated re-launch. Do not pass manually.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\install-service.ps1
@@ -33,7 +42,8 @@ param(
   [string]$ServiceName = 'TradeHook',
   [int]$Port = 8720,
   [switch]$Update,
-  [switch]$Uninstall
+  [switch]$Uninstall,
+  [switch]$Elevated
 )
 
 $ErrorActionPreference = 'Stop'
@@ -61,18 +71,6 @@ function Test-Admin {
     [Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-# Re-launch elevated (services require admin), preserving parameters.
-if (-not (Test-Admin)) {
-  Write-Host 'Requesting administrator rights...' -ForegroundColor Yellow
-  $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"")
-  foreach ($kv in $PSBoundParameters.GetEnumerator()) {
-    if ($kv.Value -is [switch]) { if ($kv.Value.IsPresent) { $argList += "-$($kv.Key)" } }
-    else { $argList += "-$($kv.Key)"; $argList += "$($kv.Value)" }
-  }
-  Start-Process powershell -Verb RunAs -ArgumentList $argList
-  exit
-}
-
 # --- Resolve paths -----------------------------------------------------------
 $terminalDir = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $serverDir = (Resolve-Path (Join-Path $terminalDir 'server')).Path
@@ -98,16 +96,6 @@ function Invoke-Build {
   } finally { Pop-Location }
 }
 
-# --- Uninstall ---------------------------------------------------------------
-if ($Uninstall) {
-  Write-Host "Removing service '$ServiceName'..." -ForegroundColor Yellow
-  Invoke-Native 'sc.exe' 'stop' $ServiceName | Out-Null
-  Start-Sleep -Seconds 1
-  Invoke-Native 'sc.exe' 'delete' $ServiceName | Out-Null
-  Write-Host 'Removed (if it existed).' -ForegroundColor Green
-  exit
-}
-
 # --- Locate or download NSSM -------------------------------------------------
 function Get-Nssm {
   $onPath = Get-Command nssm -ErrorAction SilentlyContinue
@@ -126,63 +114,160 @@ function Get-Nssm {
   return $local
 }
 
-# --- Update (rebuild + restart) ----------------------------------------------
-if ($Update) {
-  Invoke-Build
-  $nssm = Get-Nssm
-  Write-Host "Restarting '$ServiceName'..." -ForegroundColor Cyan
-  Invoke-Native $nssm 'restart' $ServiceName | Out-Null
-  Write-Host "Updated. UI at http://localhost:$Port" -ForegroundColor Green
-  exit
-}
-
-# --- Install / reinstall -----------------------------------------------------
-# Always rebuild so a fresh install deploys the CURRENT source — a stale `dist`
-# left over from an older checkout would otherwise be served silently.
-Invoke-Build
-if (-not (Test-Path $dist)) { throw "Build output not found at $dist" }
-
-$nodeExe = Get-NodePath
-$nssm = Get-Nssm
-New-Item -ItemType Directory -Force -Path (Join-Path $serverDir 'logs') | Out-Null
-
-# Replace any existing definition so paths/port stay correct on re-run.
-if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
-  Write-Host "Reinstalling existing service '$ServiceName'..." -ForegroundColor Yellow
-  Invoke-Native $nssm 'stop' $ServiceName | Out-Null
-  Invoke-Native $nssm 'remove' $ServiceName 'confirm' | Out-Null
-  Start-Sleep -Seconds 1
-}
-
-Write-Host "Installing service '$ServiceName'..." -ForegroundColor Cyan
-if ((Invoke-Native $nssm 'install' $ServiceName $nodeExe 'dist\index.js') -ne 0) { throw 'nssm install failed.' }
-Invoke-Native $nssm 'set' $ServiceName 'AppDirectory' $serverDir | Out-Null
-Invoke-Native $nssm 'set' $ServiceName 'Start' 'SERVICE_AUTO_START' | Out-Null
-Invoke-Native $nssm 'set' $ServiceName 'AppEnvironmentExtra' "PORT=$Port" | Out-Null
-Invoke-Native $nssm 'set' $ServiceName 'AppStdout' (Join-Path $serverDir 'logs\out.log') | Out-Null
-Invoke-Native $nssm 'set' $ServiceName 'AppStderr' (Join-Path $serverDir 'logs\err.log') | Out-Null
-Invoke-Native $nssm 'set' $ServiceName 'AppRotateFiles' '1' | Out-Null
-Invoke-Native $nssm 'set' $ServiceName 'Description' 'Self-hosted crypto trading terminal' | Out-Null
-Invoke-Native $nssm 'start' $ServiceName | Out-Null
-
-Start-Sleep -Seconds 2
-$svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-Write-Host ''
-if ($svc -and $svc.Status -eq 'Running') {
-  Write-Host "Done. '$ServiceName' is running and will start on boot." -ForegroundColor Green
-} else {
-  # 'Paused' from NSSM means node started then exited (crash-restart throttle).
-  # The usual cause is the port already being held by a manual `npm start`.
-  $busy = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
-    Where-Object { $_.OwningProcess -ne $svc.Id } | Select-Object -First 1
-  if ($busy) {
-    $p = Get-Process -Id $busy.OwningProcess -ErrorAction SilentlyContinue
-    Write-Warning "Port $Port is already in use by PID $($busy.OwningProcess) ($($p.ProcessName)) — usually a manual 'npm start'."
-    Write-Host "Fix: Stop-Process -Id $($busy.OwningProcess) -Force ; Restart-Service $ServiceName -Force" -ForegroundColor Yellow
-  } else {
-    Write-Warning "Service installed but status is '$($svc.Status)'. Check $serverDir\logs\err.log"
+# Kill whatever is still holding the port so a fresh node can bind with the NEW
+# code. This is what makes an update actually take: an `nssm restart` alone does
+# not always cycle the node child, and a stray manual `npm start` squatting on
+# the port would keep the old build alive. Needs admin (service-owned process).
+function Stop-PortListeners {
+  $conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+  foreach ($c in $conns) {
+    $proc = Get-Process -Id $c.OwningProcess -ErrorAction SilentlyContinue
+    if ($proc) {
+      Write-Host "  freeing port $Port (stopping PID $($proc.Id) $($proc.ProcessName))" -ForegroundColor DarkGray
+      try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+    }
   }
 }
-Write-Host "Open the terminal at http://localhost:$Port" -ForegroundColor Green
-Write-Host "Data file: $serverDir\data\terminal.json" -ForegroundColor DarkGray
-Write-Host "Update later: install-service.ps1 -Update   |   Remove: install-service.ps1 -Uninstall" -ForegroundColor DarkGray
+
+# --- Service operations (run elevated) ---------------------------------------
+function Invoke-ServiceOps {
+  $nssm = Get-Nssm
+
+  if ($Uninstall) {
+    Write-Host "Removing service '$ServiceName'..." -ForegroundColor Yellow
+    Invoke-Native 'sc.exe' 'stop' $ServiceName | Out-Null
+    Start-Sleep -Seconds 1
+    Invoke-Native 'sc.exe' 'delete' $ServiceName | Out-Null
+    Write-Host 'Removed (if it existed).' -ForegroundColor Green
+    return
+  }
+
+  if (-not (Test-Path $dist)) { throw "Build output not found at $dist (did the build step run?)" }
+
+  # Update path: stop, free the port, start — a hard cycle so the new code loads.
+  if ($Update -and (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
+    Write-Host "Restarting '$ServiceName' with the new build..." -ForegroundColor Cyan
+    Invoke-Native $nssm 'stop' $ServiceName | Out-Null
+    Start-Sleep -Seconds 1
+    Stop-PortListeners
+    Invoke-Native $nssm 'start' $ServiceName | Out-Null
+    return
+  }
+
+  # Install / reinstall.
+  $nodeExe = Get-NodePath
+  New-Item -ItemType Directory -Force -Path (Join-Path $serverDir 'logs') | Out-Null
+  if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
+    Write-Host "Reinstalling existing service '$ServiceName'..." -ForegroundColor Yellow
+    Invoke-Native $nssm 'stop' $ServiceName | Out-Null
+    Invoke-Native $nssm 'remove' $ServiceName 'confirm' | Out-Null
+    Start-Sleep -Seconds 1
+  }
+  Stop-PortListeners
+  Write-Host "Installing service '$ServiceName'..." -ForegroundColor Cyan
+  if ((Invoke-Native $nssm 'install' $ServiceName $nodeExe 'dist\index.js') -ne 0) { throw 'nssm install failed.' }
+  Invoke-Native $nssm 'set' $ServiceName 'AppDirectory' $serverDir | Out-Null
+  Invoke-Native $nssm 'set' $ServiceName 'Start' 'SERVICE_AUTO_START' | Out-Null
+  Invoke-Native $nssm 'set' $ServiceName 'AppEnvironmentExtra' "PORT=$Port" | Out-Null
+  Invoke-Native $nssm 'set' $ServiceName 'AppStdout' (Join-Path $serverDir 'logs\out.log') | Out-Null
+  Invoke-Native $nssm 'set' $ServiceName 'AppStderr' (Join-Path $serverDir 'logs\err.log') | Out-Null
+  Invoke-Native $nssm 'set' $ServiceName 'AppRotateFiles' '1' | Out-Null
+  Invoke-Native $nssm 'set' $ServiceName 'Description' 'Self-hosted crypto trading terminal' | Out-Null
+  Invoke-Native $nssm 'start' $ServiceName | Out-Null
+}
+
+# --- Verify what the service is actually serving (runs in the visible window) -
+# Catches the classic "I updated the wrong folder" trap: prints the folder +
+# commit you built, the folder the service runs from, and whether the bundle
+# the server hands out matches the one you just built.
+function Show-ServedInfo {
+  Start-Sleep -Seconds 3
+  Write-Host ''
+  Write-Host '--- Verifying what the service is serving ---' -ForegroundColor Cyan
+
+  $commit = '(unknown)'
+  try { $c = & git -C $terminalDir rev-parse --short HEAD 2>$null; if ($c) { $commit = "$c".Trim() } } catch {}
+
+  $localBundle = ''
+  $localIndex = Join-Path $terminalDir 'web\dist\index.html'
+  if (Test-Path $localIndex) {
+    $m = [regex]::Match((Get-Content $localIndex -Raw), 'assets/(index-[\w.-]+\.js)')
+    if ($m.Success) { $localBundle = $m.Groups[1].Value }
+  }
+
+  $servedBundle = ''
+  $cc = ''
+  try {
+    $r = Invoke-WebRequest "http://localhost:$Port/" -UseBasicParsing -TimeoutSec 6
+    $cc = "$($r.Headers['Cache-Control'])"
+    $m2 = [regex]::Match([string]$r.Content, 'assets/(index-[\w.-]+\.js)')
+    if ($m2.Success) { $servedBundle = $m2.Groups[1].Value }
+  } catch {
+    Write-Warning "Could not reach http://localhost:$Port/ — is the service running? ($($_.Exception.Message))"
+  }
+
+  $appDir = ''
+  try { $nssm = Get-Nssm; $appDir = (& $nssm get $ServiceName AppDirectory 2>$null | Out-String).Trim() } catch {}
+
+  Write-Host ("Built from folder : {0}" -f $terminalDir)
+  Write-Host ("Git commit        : {0}" -f $commit)
+  if ($appDir) { Write-Host ("Service runs from : {0}" -f $appDir) }
+  Write-Host ("Cache-Control     : {0}" -f $cc)
+  Write-Host ("Built bundle      : {0}" -f $localBundle)
+  Write-Host ("Served bundle     : {0}" -f $servedBundle)
+
+  if ($localBundle -and $servedBundle -and $localBundle -eq $servedBundle) {
+    Write-Host "OK - the service is serving the build you just made (commit $commit)." -ForegroundColor Green
+  } else {
+    Write-Warning 'The service is NOT serving the build you just made.'
+    $sameFolder = $false
+    if ($appDir) {
+      try { $sameFolder = ((Resolve-Path $appDir).Path.TrimEnd('\') -ieq $serverDir.TrimEnd('\')) } catch {}
+    }
+    if ($appDir -and -not $sameFolder) {
+      Write-Warning ("Folder mismatch: the service runs from '{0}', but you built '{1}'." -f $appDir, $serverDir)
+      Write-Host   'Update THAT folder instead, or re-run this installer from it to repoint the service:' -ForegroundColor Yellow
+      Write-Host   ("    cd '{0}'" -f (Split-Path $appDir)) -ForegroundColor Yellow
+      Write-Host   '    git pull ; .\scripts\install-service.ps1 -Update' -ForegroundColor Yellow
+    } else {
+      Write-Warning 'Same folder, but the old build is still being served — the process may not have restarted. Re-run -Update, or reboot.'
+    }
+  }
+  Write-Host ("Open the terminal at http://localhost:{0}" -f $Port) -ForegroundColor Green
+}
+
+# --- Elevated re-launch: only run the service step, then exit -----------------
+if ($Elevated) {
+  if (-not (Test-Admin)) { throw 'Elevation failed (not running as administrator).' }
+  Invoke-ServiceOps
+  exit 0
+}
+
+# --- Main (runs in YOUR window) ----------------------------------------------
+# 1) Build here so any error is visible and stops the update (skip for uninstall).
+if (-not $Uninstall) { Invoke-Build }
+
+# 2) Service ops need admin. Do them here if already elevated, else re-launch
+#    elevated and WAIT so we can verify afterwards in this window.
+if (Test-Admin) {
+  Invoke-ServiceOps
+} else {
+  Write-Host 'Requesting administrator rights for the service step...' -ForegroundColor Yellow
+  $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"",
+    '-Elevated', '-ServiceName', $ServiceName, '-Port', "$Port")
+  if ($Update) { $argList += '-Update' }
+  if ($Uninstall) { $argList += '-Uninstall' }
+  $proc = Start-Process powershell -Verb RunAs -ArgumentList $argList -Wait -PassThru
+  if ($proc.ExitCode -ne 0) {
+    Write-Warning "The elevated service step exited with code $($proc.ExitCode)."
+  }
+}
+
+# 3) Report (visible), unless we just removed the service.
+if ($Uninstall) {
+  Write-Host "Service '$ServiceName' removed." -ForegroundColor Green
+} else {
+  Show-ServedInfo
+  Write-Host "Data file: $serverDir\data\terminal.json" -ForegroundColor DarkGray
+  Write-Host "Update later: install-service.ps1 -Update   |   Remove: install-service.ps1 -Uninstall" -ForegroundColor DarkGray
+}
