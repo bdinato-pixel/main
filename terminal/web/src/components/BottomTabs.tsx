@@ -9,7 +9,7 @@ type Tab = 'positions' | 'orders' | 'balances' | 'signals' | 'history';
 export function BottomTabs() {
   const [tab, setTab] = useState<Tab>('positions');
   return (
-    <>
+    <div className="bottom-tabs">
       <div className="tabs">
         {(['positions', 'orders', 'balances', 'signals', 'history'] as Tab[]).map((t) => (
           <button key={t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>
@@ -17,12 +17,14 @@ export function BottomTabs() {
           </button>
         ))}
       </div>
-      {tab === 'positions' && <Positions />}
-      {tab === 'orders' && <Orders />}
-      {tab === 'balances' && <Balances />}
-      {tab === 'signals' && <Signals />}
-      {tab === 'history' && <History />}
-    </>
+      <div className="tab-scroll">
+        {tab === 'positions' && <Positions />}
+        {tab === 'orders' && <Orders />}
+        {tab === 'balances' && <Balances />}
+        {tab === 'signals' && <Signals />}
+        {tab === 'history' && <History />}
+      </div>
+    </div>
   );
 }
 
