@@ -15,6 +15,7 @@ export type AmountMode =
   | 'full_balance_pct_lev' // same, multiplied by leverage
   | 'free_balance_pct' // % of available balance
   | 'free_balance_pct_lev' // same, multiplied by leverage
+  | 'total_position_value_pct' // % of total open-position notional (all positions)
   | 'position_volume_pct' // % of current position volume (DCA/close only)
   | 'position_amount_pct'; // % of current position base amount (DCA/close only)
 

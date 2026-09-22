@@ -296,6 +296,7 @@ export class TradingEngine extends EventEmitter {
     const quoteBal = balances.find((b) => b.asset === info.quote);
     let freeBalance = quoteBal?.free ?? 0;
     let fullBalance: number;
+    let positionValue = 0;
     // Prefer the exchange's authoritative totals (correct across multi-asset
     // collateral and unrealized PnL). Fall back to summing the quote balance
     // + position PnL when the market can't report them (spot).
@@ -303,9 +304,13 @@ export class TradingEngine extends EventEmitter {
     if (eq) {
       freeBalance = eq.available;
       fullBalance = eq.equity;
+      positionValue = eq.positionValue;
     } else {
       let pnl = 0;
-      for (const p of await adapter.getPositions()) pnl += p.unrealizedPnl;
+      for (const p of await adapter.getPositions()) {
+        pnl += p.unrealizedPnl;
+        positionValue += Math.abs(p.qty) * p.markPrice;
+      }
       // Futures: quote free+locked is the wallet balance (margin used is
       // "locked"); adding uPnL gives account equity. Spot: total quote cash.
       const wallet = balances.reduce((s, b) => s + (b.asset === info.quote ? b.free + b.locked : 0), 0);
@@ -316,6 +321,7 @@ export class TradingEngine extends EventEmitter {
       leverage,
       freeBalance,
       fullBalance,
+      positionValue,
       positionQty: position?.qty,
       positionEntryPrice: position?.entryPrice,
     };

@@ -94,6 +94,38 @@ test('% of portfolio uses the exchange equity, not the summed USDT wallet', asyn
   await engine.shutdown();
 });
 
+test('% of total position value sizes against open-position notional (no ×lev)', async () => {
+  // The exchange reports 2,000 of open-position notional; a 25% order should be
+  // 25% of that (500 notional → qty 5 at price 100), NOT scaled by leverage —
+  // position value is already a leveraged notional.
+  class PosValPaper extends PaperAdapter {
+    async accountEquity() {
+      return { equity: 1000, available: 1000, wallet: 1000, unrealizedPnl: 0, positionValue: 2000 };
+    }
+  }
+  const dir = mkdtempSync(join(tmpdir(), 'terminal-pf-posval-'));
+  const db = new Db(join(dir, 'db.json'));
+  const source = new ManualPriceSource(SYMBOLS);
+  const adapter = new PosValPaper('futures', 'paper', source, 1_000);
+  const engine = new TradingEngine(db, async () => adapter);
+  source.setPrice('PFUSDT', 100);
+
+  await engine.manualOrder({
+    accountId: 'paper',
+    market: 'futures',
+    symbol: 'PFUSDT',
+    side: 'buy',
+    type: 'market',
+    amount: { mode: 'total_position_value_pct', value: 25 },
+    leverage: 5,
+  });
+  await engine.settle();
+  const pos = db.openPositionFor('paper', 'futures', 'PFUSDT');
+  assert.ok(pos, 'position opened');
+  assert.ok(Math.abs(pos.qty - 5) < 1e-6, `qty 5 (25% of 2,000 notional / 100), got ${pos.qty}`);
+  await engine.shutdown();
+});
+
 test('manual order rejects when neither qty nor a resolvable amount is given', async () => {
   const { source, engine } = makeEnv(0);
   source.setPrice('PFUSDT', 100);

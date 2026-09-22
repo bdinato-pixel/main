@@ -8,6 +8,8 @@ export interface AmountCtx {
   freeBalance: number;
   /** Account equity: wallet balance + unrealized PnL (the full portfolio). */
   fullBalance: number;
+  /** Total notional value of all open positions (Σ |qty| × mark). */
+  positionValue?: number;
   /** Current position, when averaging/closing. */
   positionQty?: number;
   positionEntryPrice?: number;
@@ -36,6 +38,9 @@ export function computeBaseQty(spec: AmountSpec, ctx: AmountCtx): number {
       return (ctx.freeBalance * v) / 100 / price;
     case 'free_balance_pct_lev':
       return (ctx.freeBalance * v * ctx.leverage) / 100 / price;
+    case 'total_position_value_pct':
+      // positionValue is already a leveraged notional, so no ×leverage here.
+      return ((ctx.positionValue ?? 0) * v) / 100 / price;
     case 'position_amount_pct':
       return ((ctx.positionQty ?? 0) * v) / 100;
     case 'position_volume_pct': {
