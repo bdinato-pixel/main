@@ -1,4 +1,5 @@
 import type {
+  AccountEquity,
   Balance,
   ExchangePosition,
   Hook,
@@ -60,6 +61,7 @@ export const api = {
       positions: ExchangePosition[];
       orders: OpenOrder[];
       managed: ManagedPosition[];
+      equity: AccountEquity | null;
       warning?: string;
     }>(`/api/account/state?${qs(account, market)}`),
   symbols: (account: string, market: MarketType) => req<SymbolInfo[]>(`/api/symbols?${qs(account, market)}`),

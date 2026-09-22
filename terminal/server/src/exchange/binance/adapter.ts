@@ -1,5 +1,6 @@
 import type { MarketType } from '../../store/types.js';
 import type {
+  AccountEquity,
   Balance,
   ExchangeAdapter,
   ExchangePosition,
@@ -110,6 +111,26 @@ export class BinanceAdapter implements ExchangeAdapter {
         locked: Number(a.balance) - Number(a.availableBalance),
       }))
       .filter((b) => b.free > 0 || b.locked > 0);
+  }
+
+  async accountEquity(): Promise<AccountEquity | null> {
+    // Spot has no single "equity" figure — let callers sum balances instead.
+    if (this.market === 'spot') return null;
+    // /fapi/v2/account gives the authoritative totals Binance shows, correct
+    // across multi-asset collateral and unrealized PnL — unlike summing the
+    // per-asset USDT wallet, which undercounts a multi-asset account.
+    const a = await this.rest.signed<{
+      totalWalletBalance: string;
+      totalUnrealizedProfit: string;
+      totalMarginBalance: string;
+      availableBalance: string;
+    }>('GET', '/fapi/v2/account');
+    return {
+      equity: Number(a.totalMarginBalance),
+      available: Number(a.availableBalance),
+      wallet: Number(a.totalWalletBalance),
+      unrealizedPnl: Number(a.totalUnrealizedProfit),
+    };
   }
 
   async getPositions(): Promise<ExchangePosition[]> {

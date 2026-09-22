@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { MarketType } from '../store/types.js';
 import type {
+  AccountEquity,
   Balance,
   ExchangeAdapter,
   ExchangePosition,
@@ -144,6 +145,13 @@ export class PaperAdapter implements ExchangeAdapter {
     return [...this.balances.entries()]
       .filter(([, v]) => Math.abs(v) > 1e-12)
       .map(([asset, free]) => ({ asset, free, locked: 0 }));
+  }
+
+  async accountEquity(): Promise<AccountEquity | null> {
+    const wallet = this.balances.get(this.quote) ?? 0;
+    const positions = await this.getPositions();
+    const unrealizedPnl = positions.reduce((s, p) => s + p.unrealizedPnl, 0);
+    return { equity: wallet + unrealizedPnl, available: wallet, wallet, unrealizedPnl };
   }
 
   async getPositions(): Promise<ExchangePosition[]> {
