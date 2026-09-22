@@ -49,11 +49,15 @@ export function OrderPanel() {
   const info = useStore((s) => s.symbols.find((x) => x.symbol === symbol));
   const symbolsLoaded = useStore((s) => s.symbols.length > 0);
   const tradable = !!info || !symbolsLoaded;
-  const quoteFree = balances.find((b) => b.asset === 'USDT')?.free ?? 0;
-  // Account equity ("full portfolio"): USDT wallet (free+locked) + open uPnL.
-  const equity =
-    balances.filter((b) => b.asset === 'USDT').reduce((s, b) => s + b.free + b.locked, 0) +
-    positions.reduce((s, p) => s + (p.unrealizedPnl || 0), 0);
+  // Prefer the exchange's authoritative totals (correct across multi-asset
+  // collateral and unrealized PnL). Fall back to summing the USDT wallet +
+  // open uPnL when the server can't report them (spot, or a failed fetch).
+  const acctEquity = useStore((s) => s.equity);
+  const quoteFree = acctEquity ? acctEquity.available : (balances.find((b) => b.asset === 'USDT')?.free ?? 0);
+  const equity = acctEquity
+    ? acctEquity.equity
+    : balances.filter((b) => b.asset === 'USDT').reduce((s, b) => s + b.free + b.locked, 0) +
+      positions.reduce((s, p) => s + (p.unrealizedPnl || 0), 0);
   const setPreview = useStore((s) => s.setPreview);
   const setApplyPreviewDrag = useStore((s) => s.setApplyPreviewDrag);
   const setTp = (i: number, patch: Partial<TpOrderSpec>) =>

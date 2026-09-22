@@ -61,6 +61,39 @@ test('manual order sizes by % of portfolio × leverage', async () => {
   await engine.shutdown();
 });
 
+test('% of portfolio uses the exchange equity, not the summed USDT wallet', async () => {
+  // A multi-asset futures account: only 1,000 USDT in the wallet, but the
+  // exchange reports 4,000 total equity (the rest is other collateral). Sizing
+  // must use the authoritative 4,000, not the 1,000 USDT balance.
+  class MultiAssetPaper extends PaperAdapter {
+    async accountEquity() {
+      return { equity: 4000, available: 1000, wallet: 4000, unrealizedPnl: 0 };
+    }
+  }
+  const dir = mkdtempSync(join(tmpdir(), 'terminal-pf-multi-'));
+  const db = new Db(join(dir, 'db.json'));
+  const source = new ManualPriceSource(SYMBOLS);
+  const adapter = new MultiAssetPaper('futures', 'paper', source, 1_000);
+  const engine = new TradingEngine(db, async () => adapter);
+  source.setPrice('PFUSDT', 100);
+
+  await engine.manualOrder({
+    accountId: 'paper',
+    market: 'futures',
+    symbol: 'PFUSDT',
+    side: 'buy',
+    type: 'market',
+    amount: { mode: 'full_balance_pct', value: 10 },
+    leverage: 5,
+  });
+  await engine.settle();
+  const pos = db.openPositionFor('paper', 'futures', 'PFUSDT');
+  assert.ok(pos, 'position opened');
+  // 10% of 4,000 equity / 100 = qty 4 (not qty 1 from the 1,000 USDT wallet).
+  assert.ok(Math.abs(pos.qty - 4) < 1e-6, `qty 4 (10% of exchange equity), got ${pos.qty}`);
+  await engine.shutdown();
+});
+
 test('manual order rejects when neither qty nor a resolvable amount is given', async () => {
   const { source, engine } = makeEnv(0);
   source.setPrice('PFUSDT', 100);

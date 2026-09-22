@@ -180,15 +180,20 @@ export function buildRouter(engine: TradingEngine): Router {
       const adapter = await engine.adapter(accountId, market);
       // Fetch parts independently so one failing endpoint (e.g. a geo/edge-
       // restricted spot call) doesn't wipe the whole view or dump an error page.
-      const [b, p, o] = await Promise.allSettled([
+      const [b, p, o, e] = await Promise.allSettled([
         adapter.getBalances(),
         adapter.getPositions(),
         adapter.getOpenOrders(),
+        adapter.accountEquity(),
       ]);
       const failed: string[] = [];
       const balances = b.status === 'fulfilled' ? b.value : (failed.push('balances'), []);
       const positions = p.status === 'fulfilled' ? p.value : (failed.push('positions'), []);
       const orders = o.status === 'fulfilled' ? o.value : (failed.push('open orders'), []);
+      // Supplementary: the exchange's authoritative equity/available totals.
+      // A failure here isn't surfaced as a warning — the UI falls back to
+      // summing balances + position PnL.
+      const equity = e.status === 'fulfilled' ? e.value : null;
       // Only reconcile when we actually have live positions to compare against.
       if (p.status === 'fulfilled') await engine.reconcile(accountId, market, positions).catch(() => {});
       let warning: string | undefined;
@@ -197,7 +202,7 @@ export function buildRouter(engine: TradingEngine): Router {
         const msg = reason ? (reason.reason instanceof Error ? reason.reason.message : String(reason.reason)) : 'request failed';
         warning = `${market} ${failed.join(', ')} unavailable — ${msg}`;
       }
-      res.json({ balances, positions, orders, managed: engine.db.openPositions(accountId), warning });
+      res.json({ balances, positions, orders, equity, managed: engine.db.openPositions(accountId), warning });
     } catch (e) {
       res.status(502).json({ error: e instanceof Error ? e.message : String(e) });
     }

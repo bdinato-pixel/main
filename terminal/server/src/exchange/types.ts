@@ -16,6 +16,19 @@ export interface Balance {
   locked: number;
 }
 
+/** Authoritative account totals (as the exchange reports them). */
+export interface AccountEquity {
+  /** Total account value = wallet balance + unrealized PnL (what Binance shows
+   *  as "Margin Balance"; USD-denominated across all collateral assets). */
+  equity: number;
+  /** Balance available to open new positions. */
+  available: number;
+  /** Wallet balance, excluding unrealized PnL. */
+  wallet: number;
+  /** Aggregate unrealized PnL. */
+  unrealizedPnl: number;
+}
+
 export interface ExchangePosition {
   symbol: string;
   /** Signed base quantity: > 0 long, < 0 short. */
@@ -105,6 +118,9 @@ export interface ExchangeAdapter {
   getSymbols(): Promise<SymbolInfo[]>;
   symbolInfo(symbol: string): Promise<SymbolInfo | undefined>;
   getBalances(): Promise<Balance[]>;
+  /** Authoritative account totals. null when the market can't report them
+   *  (e.g. spot), so callers fall back to summing balances. */
+  accountEquity(): Promise<AccountEquity | null>;
   /** Futures only; spot adapters return []. */
   getPositions(): Promise<ExchangePosition[]>;
   getOpenOrders(symbol?: string): Promise<OpenOrder[]>;

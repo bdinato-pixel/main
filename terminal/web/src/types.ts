@@ -126,6 +126,14 @@ export interface Balance {
   locked: number;
 }
 
+/** Authoritative account totals from the exchange. */
+export interface AccountEquity {
+  equity: number;
+  available: number;
+  wallet: number;
+  unrealizedPnl: number;
+}
+
 export interface ExchangePosition {
   symbol: string;
   qty: number;

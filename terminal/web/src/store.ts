@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { api } from './api';
 import type {
+  AccountEquity,
   Balance,
   ExchangePosition,
   Hook,
@@ -26,6 +27,8 @@ interface AppState {
   balances: Balance[];
   positions: ExchangePosition[];
   managed: ManagedPosition[];
+  /** Authoritative account totals from the exchange (null on spot/failure). */
+  equity: AccountEquity | null;
   orders: OpenOrder[];
   signals: SignalLogEntry[];
   prices: Record<string, number>;
@@ -60,6 +63,7 @@ export const useStore = create<AppState>((set, get) => ({
   balances: [],
   positions: [],
   managed: [],
+  equity: null,
   orders: [],
   signals: [],
   prices: {},
