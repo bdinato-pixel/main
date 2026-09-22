@@ -151,7 +151,8 @@ export class PaperAdapter implements ExchangeAdapter {
     const wallet = this.balances.get(this.quote) ?? 0;
     const positions = await this.getPositions();
     const unrealizedPnl = positions.reduce((s, p) => s + p.unrealizedPnl, 0);
-    return { equity: wallet + unrealizedPnl, available: wallet, wallet, unrealizedPnl };
+    const positionValue = positions.reduce((s, p) => s + Math.abs(p.qty) * p.markPrice, 0);
+    return { equity: wallet + unrealizedPnl, available: wallet, wallet, unrealizedPnl, positionValue };
   }
 
   async getPositions(): Promise<ExchangePosition[]> {

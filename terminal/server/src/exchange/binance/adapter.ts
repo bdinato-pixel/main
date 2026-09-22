@@ -124,12 +124,15 @@ export class BinanceAdapter implements ExchangeAdapter {
       totalUnrealizedProfit: string;
       totalMarginBalance: string;
       availableBalance: string;
+      positions?: { notional: string }[];
     }>('GET', '/fapi/v2/account');
+    const positionValue = (a.positions ?? []).reduce((s, p) => s + Math.abs(Number(p.notional) || 0), 0);
     return {
       equity: Number(a.totalMarginBalance),
       available: Number(a.availableBalance),
       wallet: Number(a.totalWalletBalance),
       unrealizedPnl: Number(a.totalUnrealizedProfit),
+      positionValue,
     };
   }
 

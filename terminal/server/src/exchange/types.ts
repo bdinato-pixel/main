@@ -27,6 +27,8 @@ export interface AccountEquity {
   wallet: number;
   /** Aggregate unrealized PnL. */
   unrealizedPnl: number;
+  /** Total notional value of all open positions (Σ |qty| × mark). */
+  positionValue: number;
 }
 
 export interface ExchangePosition {

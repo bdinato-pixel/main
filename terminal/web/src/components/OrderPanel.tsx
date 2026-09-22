@@ -6,7 +6,7 @@ import { DEFAULT_GRID, GridFields, gridPreviewPrices } from './GridFields';
 import { NumberInput } from './NumberInput';
 import { parseSignal, type ParsedSignal } from '../signalParse';
 
-type SizeUnit = 'usd' | 'base' | 'freePct' | 'fullPct' | 'fullPctLev';
+type SizeUnit = 'usd' | 'base' | 'freePct' | 'fullPct' | 'fullPctLev' | 'posValuePct';
 const CANDLE_TFS = ['1m', '3m', '5m', '15m', '1h', '4h', '1d', '1w'];
 
 export function OrderPanel() {
@@ -58,6 +58,10 @@ export function OrderPanel() {
     ? acctEquity.equity
     : balances.filter((b) => b.asset === 'USDT').reduce((s, b) => s + b.free + b.locked, 0) +
       positions.reduce((s, p) => s + (p.unrealizedPnl || 0), 0);
+  // Total notional of open positions (Binance's "Position Value").
+  const positionValue = acctEquity
+    ? acctEquity.positionValue
+    : positions.reduce((s, p) => s + Math.abs(p.qty) * (p.markPrice || 0), 0);
   const setPreview = useStore((s) => s.setPreview);
   const setApplyPreviewDrag = useStore((s) => s.setApplyPreviewDrag);
   const setTp = (i: number, patch: Partial<TpOrderSpec>) =>
@@ -130,9 +134,10 @@ export function OrderPanel() {
     if (sizeUnit === 'usd') return size / ref;
     if (sizeUnit === 'freePct') return ((quoteFree * size) / 100) * lev / ref;
     if (sizeUnit === 'fullPct') return (equity * size) / 100 / ref;
+    if (sizeUnit === 'posValuePct') return (positionValue * size) / 100 / ref; // already a notional
     // fullPctLev
     return ((equity * size) / 100) * lev / ref;
-  }, [size, sizeUnit, lastPrice, limitPrice, type, gridOn, quoteFree, equity, leverage, market]);
+  }, [size, sizeUnit, lastPrice, limitPrice, type, gridOn, quoteFree, equity, positionValue, leverage, market]);
 
   // Apply a parsed signal to the form (never auto-submits — user reviews & fires).
   const applySignal = (p: ParsedSignal) => {
@@ -194,7 +199,9 @@ export function OrderPanel() {
           ? { mode: 'full_balance_pct', value: size }
           : sizeUnit === 'fullPctLev'
             ? { mode: 'full_balance_pct_lev', value: size }
-            : undefined;
+            : sizeUnit === 'posValuePct'
+              ? { mode: 'total_position_value_pct', value: size }
+              : undefined;
       await api.placeOrder({
         accountId: account,
         market,
@@ -295,11 +302,13 @@ export function OrderPanel() {
           <option value="freePct">% free{market === 'futures' ? ' × lev' : ''}</option>
           <option value="fullPct">% portfolio</option>
           {market === 'futures' && <option value="fullPctLev">% portfolio × lev</option>}
+          {market === 'futures' && <option value="posValuePct">% position value</option>}
         </select>
       </div>
       <div className="row dim" style={{ fontSize: 12 }}>
         ≈ {qty > 0 ? qty.toPrecision(6) : '—'} {symbol.replace('USDT', '')} · free {quoteFree.toFixed(2)} · portfolio{' '}
-        {equity.toFixed(2)} USDT
+        {equity.toFixed(2)}
+        {market === 'futures' && <> · positions {positionValue.toFixed(2)}</>} USDT
       </div>
 
       {market === 'futures' && (

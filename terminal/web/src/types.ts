@@ -132,6 +132,8 @@ export interface AccountEquity {
   available: number;
   wallet: number;
   unrealizedPnl: number;
+  /** Total notional value of all open positions (Σ |qty| × mark). */
+  positionValue: number;
 }
 
 export interface ExchangePosition {
