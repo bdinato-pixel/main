@@ -280,7 +280,7 @@ export function buildRouter(engine: TradingEngine): Router {
             'full_balance_pct_lev',
             'free_balance_pct',
             'free_balance_pct_lev',
-            'total_position_value_pct',
+            'total_position_value_pct_lev',
             'position_amount_pct',
             'position_volume_pct',
           ]),
