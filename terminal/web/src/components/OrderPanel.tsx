@@ -134,7 +134,7 @@ export function OrderPanel() {
     if (sizeUnit === 'usd') return size / ref;
     if (sizeUnit === 'freePct') return ((quoteFree * size) / 100) * lev / ref;
     if (sizeUnit === 'fullPct') return (equity * size) / 100 / ref;
-    if (sizeUnit === 'posValuePct') return (positionValue * size) / 100 / ref; // already a notional
+    if (sizeUnit === 'posValuePct') return ((positionValue * size) / 100) * lev / ref;
     // fullPctLev
     return ((equity * size) / 100) * lev / ref;
   }, [size, sizeUnit, lastPrice, limitPrice, type, gridOn, quoteFree, equity, positionValue, leverage, market]);
@@ -200,7 +200,7 @@ export function OrderPanel() {
           : sizeUnit === 'fullPctLev'
             ? { mode: 'full_balance_pct_lev', value: size }
             : sizeUnit === 'posValuePct'
-              ? { mode: 'total_position_value_pct', value: size }
+              ? { mode: 'total_position_value_pct_lev', value: size }
               : undefined;
       await api.placeOrder({
         accountId: account,
@@ -302,7 +302,7 @@ export function OrderPanel() {
           <option value="freePct">% free{market === 'futures' ? ' × lev' : ''}</option>
           <option value="fullPct">% portfolio</option>
           {market === 'futures' && <option value="fullPctLev">% portfolio × lev</option>}
-          {market === 'futures' && <option value="posValuePct">% position value</option>}
+          {market === 'futures' && <option value="posValuePct">% position value × lev</option>}
         </select>
       </div>
       <div className="row dim" style={{ fontSize: 12 }}>
